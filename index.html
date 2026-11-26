@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Castle by Night</title>
 <style>
   :root { --ink: #dfe3ff; --dim: #8f93c4; --glass: rgba(14, 14, 38, 0.55); --edge: rgba(170, 160, 255, 0.25); }
@@ -38,6 +38,20 @@
   #err { display: none; position: fixed; top: 60px; left: 28px; right: 28px; max-height: 40vh; overflow: auto; margin: 0;
     padding: 12px; border-radius: 8px; background: rgba(60, 0, 20, 0.85); color: #ffd6de; font: 12px/1.4 ui-monospace, monospace;
     white-space: pre-wrap; user-select: text; z-index: 10; }
+  .actions { display: flex; gap: 10px; }
+  .hint .touch { display: none; }
+  @media (pointer: coarse) { .hint .mouse { display: none; } .hint .touch { display: inline; } }
+  /* Phones and narrow windows: hint under the title, menu on two rows */
+  @media (max-width: 720px) {
+    h1 { top: 16px; left: 16px; font-size: 13px; letter-spacing: .28em; }
+    .hint { top: 40px; left: 16px; right: 16px; text-align: left; font-size: 11px; }
+    .ui { flex-direction: column; gap: 6px; padding: 6px; border-radius: 24px;
+      bottom: calc(12px + env(safe-area-inset-bottom)); max-width: calc(100vw - 16px); }
+    .actions, .seg { gap: 6px; justify-content: center; }
+    .seg { padding-left: 0; border-left: 0; }
+    button, .seg button { padding: 9px 16px; font-size: 12px; letter-spacing: .06em; }
+    #err { top: 70px; left: 12px; right: 12px; }
+  }
   #fade { position: fixed; inset: 0; pointer-events: none; opacity: 0; transition: opacity .35s ease; }
   body.day { --ink: #1f2547; --dim: #4b557e; --glass: rgba(255, 255, 255, 0.55); --edge: rgba(40, 60, 130, 0.22); }
   body.day button { background: rgba(255, 255, 255, 0.35); }
@@ -53,14 +67,16 @@
 </head>
 <body>
 <h1>Castle by Night</h1>
-<div class="hint">Drag to orbit · Scroll to zoom · Right-drag to pan</div>
+<div class="hint"><span class="mouse">Drag to orbit · Scroll to zoom · Right-drag to pan</span><span class="touch">Drag to orbit · Pinch to zoom · Two-finger drag to pan</span></div>
 <div id="loader"><span id="loadText">Summoning the castle</span><div id="bar"><i></i></div></div>
 <div id="label"></div>
 <div id="fade"></div>
 <pre id="err"></pre>
 <div class="ui">
-  <button id="explode" class="primary" disabled>Explode</button>
-  <button id="spin">Spin</button>
+  <span class="actions">
+    <button id="explode" class="primary" disabled>Explode</button>
+    <button id="spin">Spin</button>
+  </span>
   <span class="seg">
     <button data-mode="night">Night</button>
     <button data-mode="day">Day</button>
