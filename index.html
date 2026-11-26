@@ -1,0 +1,653 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Castle by Night</title>
+<style>
+  :root { --ink: #dfe3ff; --dim: #8f93c4; --glass: rgba(14, 14, 38, 0.55); --edge: rgba(170, 160, 255, 0.25); }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #05050f; color: var(--ink);
+    font: 14px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; }
+  canvas { display: block; }
+  .ui { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
+    display: flex; gap: 10px; align-items: center; padding: 8px; border-radius: 999px;
+    background: var(--glass); border: 1px solid var(--edge); backdrop-filter: blur(10px); }
+  button { appearance: none; border: 1px solid var(--edge); background: rgba(120, 110, 255, 0.12);
+    color: var(--ink); font: inherit; letter-spacing: .08em; text-transform: uppercase;
+    padding: 10px 22px; border-radius: 999px; cursor: pointer; transition: background .2s, box-shadow .2s; }
+  button:hover { background: rgba(150, 140, 255, 0.25); box-shadow: 0 0 18px rgba(140, 130, 255, 0.35); }
+  button.primary { background: rgba(150, 140, 255, 0.28); }
+  button:disabled { opacity: .4; cursor: default; }
+  h1 { position: fixed; top: 22px; left: 28px; margin: 0; font-weight: 300; font-size: 15px;
+    letter-spacing: .35em; text-transform: uppercase; color: var(--dim); }
+  #label { position: fixed; pointer-events: none; padding: 6px 10px; border-radius: 8px;
+    background: var(--glass); border: 1px solid var(--edge); font-size: 12px; white-space: nowrap;
+    opacity: 0; transition: opacity .15s; }
+  #label small { display: block; color: var(--dim); }
+  #loader { position: fixed; inset: 0; display: grid; place-content: center; gap: 14px; text-align: center;
+    color: var(--dim); letter-spacing: .3em; text-transform: uppercase; font-size: 12px; transition: opacity .8s; }
+  #bar { width: 220px; height: 2px; background: rgba(255,255,255,.08); overflow: hidden; border-radius: 2px; }
+  #bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #7b6cff, #b9e2ff);
+    box-shadow: 0 0 12px #9b8cff; transition: width .2s; }
+  .hint { position: fixed; top: 22px; right: 28px; color: var(--dim); font-size: 12px; text-align: right; }
+  .seg { display: flex; gap: 4px; padding-left: 10px; border-left: 1px solid var(--edge); }
+  .seg button { padding: 10px 16px; }
+  .seg button.active { background: rgba(170, 160, 255, 0.4); box-shadow: inset 0 0 0 1px rgba(200, 190, 255, 0.5); }
+  body.day .seg button.active { background: #fff; }
+  #err { display: none; position: fixed; top: 60px; left: 28px; right: 28px; max-height: 40vh; overflow: auto; margin: 0;
+    padding: 12px; border-radius: 8px; background: rgba(60, 0, 20, 0.85); color: #ffd6de; font: 12px/1.4 ui-monospace, monospace;
+    white-space: pre-wrap; user-select: text; z-index: 10; }
+  #fade { position: fixed; inset: 0; pointer-events: none; opacity: 0; transition: opacity .35s ease; }
+  body.day { --ink: #1f2547; --dim: #4b557e; --glass: rgba(255, 255, 255, 0.55); --edge: rgba(40, 60, 130, 0.22); }
+  body.day button { background: rgba(255, 255, 255, 0.35); }
+  body.day button:hover { background: rgba(255, 255, 255, 0.7); box-shadow: 0 0 18px rgba(255, 255, 255, 0.6); }
+  body.day button.primary { background: rgba(255, 255, 255, 0.75); }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<h1>Castle by Night</h1>
+<div class="hint">Drag to orbit · Scroll to zoom · Right-drag to pan</div>
+<div id="loader"><span id="loadText">Summoning the castle</span><div id="bar"><i></i></div></div>
+<div id="label"></div>
+<div id="fade"></div>
+<pre id="err"></pre>
+<div class="ui">
+  <button id="explode" class="primary" disabled>Explode</button>
+  <button id="spin">Spin</button>
+  <span class="seg">
+    <button data-mode="night">Night</button>
+    <button data-mode="day">Day</button>
+    <button data-mode="stars">Stars</button>
+  </span>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+const MODEL_URL = 'models/castle.bin.gz';
+
+// ---------- Explode settings (units: mm, model is Z-up) ----------
+// Each top-level folder is a layer. Layers lift apart vertically; within a
+// layer, each sub-assembly (second-level folder) slides outward from the center.
+const LAYERS = {
+  ROCHERS:   { lift: -160, spread: 140, order: 0 },
+  BASE:      { lift:    0, spread: 190, order: 1 },
+  BATIMENTS: { lift:  260, spread: 170, order: 2 },
+  DONJON:    { lift:  560, spread:  60, order: 3 },
+};
+const EXPLODE_TIME = 1.6;   // seconds per layer
+const LAYER_DELAY  = 0.35;  // stagger between layers
+
+// ---------- Errors are shown on screen (easier to report than the console) ----------
+function showError(e) {
+  console.error(e);
+  const box = document.getElementById('err');
+  box.textContent += (e && (e.stack || e.message) || String(e)) + '\n';
+  box.style.display = 'block';
+}
+addEventListener('error', ev => showError(ev.error || ev.message));
+addEventListener('unhandledrejection', ev => showError(ev.reason));
+
+// ---------- Renderer, scene, camera ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.prepend(renderer.domElement);
+renderer.domElement.addEventListener('webglcontextlost', () => showError('WebGL context lost: the graphics card stopped rendering this page.'));
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x0b0a22, 0.00045);
+const SKY_NIGHT = skyTexture(['#02020a', '#0a0a26', '#1b1446', '#2a1d55']);
+const SKY_DAY = skyTexture(['#3f74c4', '#6f9fdd', '#a9c9ee', '#e4edf6']);
+scene.background = SKY_NIGHT;
+
+const camera = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, 5, 20000);
+camera.position.set(900, 700, 1300);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.maxPolarAngle = Math.PI * 0.52;
+controls.minDistance = 200;
+controls.maxDistance = 4000;
+controls.autoRotateSpeed = 0.5;
+
+// ---------- Lights: cold moonlight + violet ambience ----------
+const hemi = new THREE.HemisphereLight(0x7d86ff, 0x1a0f2e, 0.9);
+scene.add(hemi);
+const moon = new THREE.DirectionalLight(0xc6d4ff, 2.4);
+moon.position.set(-700, 1100, 500);
+moon.castShadow = true;
+moon.shadow.mapSize.set(2048, 2048);
+Object.assign(moon.shadow.camera, { left: -700, right: 700, top: 1400, bottom: -500, near: 100, far: 3500 });
+moon.shadow.bias = -0.0004;
+moon.shadow.normalBias = 1.2;
+scene.add(moon, moon.target);
+const rim = new THREE.DirectionalLight(0x9a6bff, 1.1);
+rim.position.set(800, 300, -900);
+scene.add(rim);
+
+// ---------- Moon disc ----------
+const moonDisc = new THREE.Mesh(new THREE.CircleGeometry(120, 64),
+  new THREE.MeshBasicMaterial({ color: 0xe8ecff, fog: false }));
+moonDisc.position.set(-3500, 2600, -5200);
+moonDisc.lookAt(0, 0, 0);
+scene.add(moonDisc);
+
+// ---------- Starfield with twinkle ----------
+const stars = makeStars(7000);
+scene.add(stars);
+const voidStars = makeStars(20000, true);   // all around, including below: star mode only
+voidStars.visible = false;
+scene.add(voidStars);
+
+// ---------- Materials (night) ----------
+const MATS = {
+  stone:   new THREE.MeshStandardMaterial({ color: 0xb8b6d2, roughness: 0.85, flatShading: true }),
+  roof:    new THREE.MeshStandardMaterial({ color: 0x334a86, roughness: 0.5, metalness: 0.25, flatShading: true }),
+  timber:  new THREE.MeshStandardMaterial({ color: 0x5b4a5e, roughness: 0.9, flatShading: true }),
+  iron:    new THREE.MeshStandardMaterial({ color: 0x2b2a3a, roughness: 0.4, metalness: 0.8, flatShading: true }),
+  grass:   new THREE.MeshStandardMaterial({ color: 0x2f4a52, roughness: 1, flatShading: true }),
+  rock:    new THREE.MeshStandardMaterial({ color: 0x67657e, roughness: 1, flatShading: true }),
+  flag:    new THREE.MeshStandardMaterial({ color: 0xcfc8ff, emissive: 0x6a5cff, emissiveIntensity: 0.6, flatShading: true, side: THREE.DoubleSide }),
+  lantern: new THREE.MeshStandardMaterial({ color: 0xbfe8ff, emissive: 0x9fdcff, emissiveIntensity: 2.2, flatShading: true }),
+};
+
+// ---------- Materials (day): palette taken from the kit's colour renders ----------
+const std = (color, roughness, metalness = 0, extra = {}) =>
+  new THREE.MeshStandardMaterial({ color, roughness, metalness, flatShading: true, ...extra });
+const DAY_MATS = {
+  wall:    std(0xe4a79c, 0.75),          // powder pink walls (buildings, keep)
+  base:    std(0xa4b5d9, 0.8),           // pale lavender-blue base walls
+  trim:    std(0xf2ece1, 0.6),           // cream crenellations, cornices, columns
+  roof:    std(0x2f6798, 0.45, 0.15),    // slate blue roofs
+  gold:    std(0xd8b04a, 0.3, 0.85),     // finials, spires, flags
+  timber:  std(0x6f4430, 0.85),
+  tree:    std(0x4a2e22, 0.9),
+  glass:   std(0x2c4e88, 0.15, 0.3),     // stained glass
+  brick:   std(0xc4867b, 0.85),
+  iron:    std(0x2c2c33, 0.4, 0.8),
+  grass:   std(0x5f8b45, 1),
+  rock:    std(0xcac7c2, 0.95),
+  lantern: std(0xf4e6b8, 0.3, 0.2, { emissive: 0xffd98a, emissiveIntensity: 0.25 }),
+};
+
+function dayKey(p) {
+  const n = p.name.toLowerCase(), layer = p.path.split('/')[0];
+  if (p.mat === 'iron' || p.mat === 'lantern' || p.mat === 'grass') return p.mat;
+  if (p.mat === 'rock' || /^rocher/.test(n)) return 'rock';
+  if (/faitage|drapeau|chouette|sphere|cloche|^pointe|jonction pointe/.test(n)) return 'gold';
+  if (/arbre|branche/.test(n)) return 'tree';
+  if (/^muraille/.test(n)) return layer === 'BASE' ? 'base' : 'wall';
+  if (/colombage|porte|pont levis|charpente|escalier bois|medaillon/.test(n)) return 'timber';
+  if (/encadrement|garde corps/.test(n)) return 'trim';
+  if (/vitra|vitres/.test(n)) return 'glass';
+  if (/chemin|brique/.test(n)) return 'brick';
+  if (/sous toit|arcades sous|arceaux|encadrements piliers|interieur sous|jonction etage et toit/.test(n)) return 'trim';
+  if (p.mat === 'roof' || /^toit/.test(n)) return 'roof';
+  if (/corps|^mur/.test(n)) return layer === 'BASE' ? 'base' : 'wall';
+  if (/creneau|corniche|corbeau|colonne|^col\.|pilier|pilastre|balcon|arche|arcade|rambarde|main courante|encadrement|appui|linteau|meneau|moulure|culot|anneau|jonction|dessus|fenetre|fenestrou|garde corps|marches|escalier|support|voute|bordure|barreau/.test(n)) return 'trim';
+  return layer === 'BASE' ? 'base' : 'wall';
+}
+
+// ---------- Ambiences: night, day, and a castle made of stars ----------
+const SKY_VOID = skyTexture(['#000003', '#02020a', '#050414', '#08061a']);
+const THEMES = {
+  night: { sky: SKY_NIGHT, fog: 0x0b0a22, fogDensity: 0.00045, exposure: 1.05,
+    hemi: [0x7d86ff, 0x1a0f2e, 0.9], key: [0xc6d4ff, 2.4, -700, 1100, 500], rim: [0x9a6bff, 1.1],
+    ground: 0x0d0c22, bloom: [0.55, 0.82], stars: true, moon: true, title: 'Castle by Night', fade: '#05050f' },
+  day:   { sky: SKY_DAY, fog: 0xd6e3f2, fogDensity: 0.00018, exposure: 1.0,
+    hemi: [0xd8e8ff, 0x6d7b58, 1.4], key: [0xfff0d8, 3.2, 900, 1500, 700], rim: [0xbcd4ff, 0.5],
+    ground: 0x83946f, bloom: [0.12, 0.95], stars: false, title: 'Castle by Day', fade: '#eef3fb' },
+  stars: { sky: SKY_VOID, fog: 0x000000, fogDensity: 0, exposure: 1.0,
+    hemi: [0x7d86ff, 0x1a0f2e, 0.9], key: [0xc6d4ff, 2.4, -700, 1100, 500], rim: [0x9a6bff, 1.1],
+    ground: null, bloom: [0.85, 0.1], stars: false, voidStars: true, skyDim: 0.5, skySize: 0.65, floating: true,
+    title: 'Castle of Stars', fade: '#000003' },
+};
+let mode = ['day', 'stars'].includes(localStorage.getItem('castle-mode')) ? localStorage.getItem('castle-mode') : 'night';
+
+// ---------- Ground ----------
+const ground = new THREE.Mesh(new THREE.CircleGeometry(4000, 96),
+  new THREE.MeshStandardMaterial({ color: 0x0d0c22, roughness: 1 }));
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// ---------- Post-processing: soft glow ----------
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.55, 0.6, 0.82);
+composer.addPass(bloom);
+composer.addPass(new OutputPass());
+
+// ---------- Mode switch ----------
+function applyTheme(m) {
+  const T = THEMES[m];
+  mode = m;
+  localStorage.setItem('castle-mode', m);
+  scene.background = T.sky;
+  scene.fog.color.setHex(T.fog);
+  scene.fog.density = T.fogDensity;
+  renderer.toneMappingExposure = T.exposure;
+  hemi.color.setHex(T.hemi[0]); hemi.groundColor.setHex(T.hemi[1]); hemi.intensity = T.hemi[2];
+  moon.color.setHex(T.key[0]); moon.intensity = T.key[1]; moon.position.set(T.key[2], T.key[3], T.key[4]);
+  rim.color.setHex(T.rim[0]); rim.intensity = T.rim[1];
+  ground.visible = T.ground !== null;
+  if (ground.visible) ground.material.color.setHex(T.ground);
+  bloom.strength = T.bloom[0]; bloom.threshold = T.bloom[1];
+  stars.visible = T.stars;
+  voidStars.visible = !!T.voidStars;
+  controls.maxPolarAngle = T.floating ? Math.PI : Math.PI * 0.52;   // no ground in the void: orbit below too
+  moonDisc.visible = !!T.moon;
+  starUniforms.uDim.value = T.skyDim ?? 1;
+  starUniforms.uSize.value = T.skySize ?? 1;
+  setHover(null);
+  if (m === 'stars' && parts.length && !castleStarsBuilt) buildCastleStars();
+  for (const p of parts) {
+    p.mesh.material = m === 'stars' ? DEPTH_ONLY : p.mesh.userData[m];
+    if (p.stars) p.stars.visible = m === 'stars';
+  }
+  if (!T.floating) castle.position.y = castleBaseY;
+  document.body.classList.toggle('day', m === 'day');
+  document.querySelector('h1').textContent = T.title;
+  document.title = T.title;
+  document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('active', b.dataset.mode === m));
+}
+
+document.querySelectorAll('[data-mode]').forEach(btn => btn.addEventListener('click', () => {
+  const next = btn.dataset.mode;
+  if (next === mode) return;
+  const fade = document.getElementById('fade');
+  fade.style.background = THEMES[next].fade;
+  fade.style.opacity = 1;
+  setTimeout(() => {
+    try { applyTheme(next); } catch (e) { showError(e); } finally { fade.style.opacity = 0; }
+  }, 350);
+}));
+
+// ---------- Castle made of stars ----------
+// Points are scattered evenly over every part's surface (area-weighted) and added
+// as children of that part's mesh, so they follow the Explode animation. In this
+// mode the mesh itself only writes depth: it stays invisible but hides the stars
+// behind it, which keeps the silhouette readable.
+const DEPTH_ONLY = new THREE.MeshBasicMaterial({ colorWrite: false });
+const STAR_TINT = { gold: 0xffdca0, roof: 0xa8b8ff, glass: 0x9aaeff, grass: 0xa8e8d4, rock: 0xcfd0ee,
+  tree: 0xd6c6ff, timber: 0xe6d4ff, lantern: 0xfff1c8, brick: 0xffc8d8, wall: 0xf1e8ff };
+const CASTLE_STAR_COUNT = innerWidth < 800 ? 85000 : 160000;   // density of the star castle
+const SURFACE_LIFT = 0.35;   // mm: keeps each star just in front of its surface
+const castleStarUniforms = { uTime: { value: 0 }, uPR: { value: renderer.getPixelRatio() },
+  uScale: { value: 1300 }, uBright: { value: 1.95 } };   // uBright: overall star brightness
+const castleStarMat = new THREE.ShaderMaterial({
+  uniforms: castleStarUniforms, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  vertexShader: `
+    attribute float size; attribute float phase; attribute float spark; attribute vec3 color;
+    uniform float uTime, uPR, uScale; varying float vA; varying vec3 vC;
+    void main() {
+      vec4 mv = modelViewMatrix * vec4(position, 1.0);
+      // spark 0 = quiet star (dim, barely moves), 1 = restless star (fast, deep, sharp flashes)
+      float speed = mix(0.3, 2.8, spark) * (0.8 + 0.4 * fract(phase * 7.3));
+      float s = 0.5 + 0.5 * sin(uTime * speed + phase);
+      s = pow(s, mix(1.0, 4.0, spark));
+      float amp = mix(0.2, 1.0, spark);
+      vA = mix(0.5, 1.0, spark) * ((1.0 - amp) + amp * s);
+      // slow waves drifting through the castle: whole areas fade out and come back
+      float wave = sin(position.z * 0.018 + position.x * 0.011 - uTime * 0.32)
+                 * sin(position.y * 0.014 - position.z * 0.007 + uTime * 0.21);
+      vA *= 0.72 + 0.28 * wave;
+      vC = color;
+      gl_PointSize = clamp(size * uPR * uScale / -mv.z, 1.0, 6.0 * uPR);
+      gl_Position = projectionMatrix * mv;
+    }`,
+  fragmentShader: `
+    uniform float uBright; varying float vA; varying vec3 vC;
+    void main() {
+      float d = length(gl_PointCoord - 0.5);
+      float a = smoothstep(0.5, 0.0, d);
+      gl_FragColor = vec4(vC * uBright, a * a * vA);
+    }`,
+});
+let castleStarsBuilt = false;
+
+function buildCastleStars() {
+  castleStarsBuilt = true;
+  const areas = parts.map(p => {
+    const P = p.mesh.geometry.attributes.position.array, I = p.mesh.geometry.index.array;
+    const cum = new Float32Array(I.length / 3);
+    let a = 0;
+    for (let t = 0; t < cum.length; t++) {
+      const i0 = I[t * 3] * 3, i1 = I[t * 3 + 1] * 3, i2 = I[t * 3 + 2] * 3;
+      const ux = P[i1] - P[i0], uy = P[i1 + 1] - P[i0 + 1], uz = P[i1 + 2] - P[i0 + 2];
+      const vx = P[i2] - P[i0], vy = P[i2 + 1] - P[i0 + 1], vz = P[i2 + 2] - P[i0 + 2];
+      const cx = uy * vz - uz * vy, cy = uz * vx - ux * vz, cz = ux * vy - uy * vx;
+      a += Math.sqrt(cx * cx + cy * cy + cz * cz) / 2;
+      cum[t] = a;
+    }
+    p.cum = cum;
+    return a;
+  });
+  const totalArea = areas.reduce((s, a) => s + a, 0);
+  const tint = new THREE.Color(), c = new THREE.Color();
+
+  parts.forEach((p, k) => {
+    const n = Math.max(4, Math.round(CASTLE_STAR_COUNT * areas[k] / totalArea));
+    const P = p.mesh.geometry.attributes.position.array, I = p.mesh.geometry.index.array, cum = p.cum;
+    const pos = new Float32Array(n * 3), size = new Float32Array(n), phase = new Float32Array(n), spark = new Float32Array(n), col = new Float32Array(n * 3);
+    tint.setHex(STAR_TINT[p.dayKey] ?? STAR_TINT.wall);
+    for (let j = 0; j < n; j++) {
+      // pick a triangle proportionally to its area
+      const r = Math.random() * areas[k];
+      let lo = 0, hi = cum.length - 1;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (cum[mid] < r) lo = mid + 1; else hi = mid; }
+      const i0 = I[lo * 3] * 3, i1 = I[lo * 3 + 1] * 3, i2 = I[lo * 3 + 2] * 3;
+      let u = Math.random(), v = Math.random();
+      if (u + v > 1) { u = 1 - u; v = 1 - v; }
+      const ux = P[i1] - P[i0], uy = P[i1 + 1] - P[i0 + 1], uz = P[i1 + 2] - P[i0 + 2];
+      const vx = P[i2] - P[i0], vy = P[i2 + 1] - P[i0 + 1], vz = P[i2 + 2] - P[i0 + 2];
+      let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      const nl = Math.hypot(nx, ny, nz) || 1;
+      nx *= SURFACE_LIFT / nl; ny *= SURFACE_LIFT / nl; nz *= SURFACE_LIFT / nl;
+      pos[j * 3]     = P[i0] + u * ux + v * vx + nx;
+      pos[j * 3 + 1] = P[i0 + 1] + u * uy + v * vy + ny;
+      pos[j * 3 + 2] = P[i0 + 2] + u * uz + v * vz + nz;
+      spark[j] = Math.pow(Math.random(), 3);                  // most stars quiet, a few restless
+      size[j] = 0.9 + spark[j] * 1.4 + Math.pow(Math.random(), 8) * 2.4;
+      phase[j] = Math.random() * 100;
+      c.copy(tint).offsetHSL((Math.random() - 0.5) * 0.04, 0, (Math.random() - 0.5) * 0.12);
+      c.toArray(col, j * 3);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('size', new THREE.BufferAttribute(size, 1));
+    geo.setAttribute('phase', new THREE.BufferAttribute(phase, 1));
+    geo.setAttribute('spark', new THREE.BufferAttribute(spark, 1));
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    geo.boundingSphere = p.mesh.geometry.boundingSphere;
+    const pts = new THREE.Points(geo, castleStarMat);
+    pts.raycast = () => {};          // hover keeps working on the invisible mesh
+    p.mesh.add(pts);
+    p.stars = pts;
+    p.mesh.userData.starPoints = pts;
+    delete p.cum;
+  });
+}
+
+// ---------- Load the castle ----------
+const castle = new THREE.Group();          // Z-up model space
+castle.rotation.x = -Math.PI / 2;           // -> Y-up world
+scene.add(castle);
+let castleBaseY = 0;
+const parts = [];                           // { mesh, layer, offset: Vector3 }
+
+loadCastle().catch(err => {
+  console.error(err);
+  document.getElementById('loadText').textContent = 'Could not load ' + MODEL_URL;
+});
+
+async function loadCastle() {
+  const buf = await fetchWithProgress(MODEL_URL);
+  const dv = new DataView(buf);
+  const jsonLen = dv.getUint32(0, true);
+  const header = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, jsonLen)));
+  const posStart = 4 + jsonLen;
+  const q = new Uint16Array(buf, posStart, header.positionsBytes / 2);
+  const idx = new Uint16Array(buf, posStart + header.positionsBytes, header.indicesBytes / 2);
+  const [mx, my, mz] = header.min, [sx, sy, sz] = header.scale;
+
+  // Centers of each sub-assembly, used to push them outward when exploding.
+  const groupCenters = {};
+  const all = new THREE.Box3();
+  for (const p of header.parts) {
+    const key = subKey(p.path);
+    (groupCenters[key] ??= { sum: new THREE.Vector3(), n: 0 }).sum.add(new THREE.Vector3(...p.center));
+    groupCenters[key].n++;
+  }
+
+  for (const p of header.parts) {
+    const [v0, vn] = p.v, [i0, iN] = p.i;
+    const pos = new Float32Array(vn * 3);
+    for (let k = 0; k < vn; k++) {
+      const s = (v0 + k) * 3;
+      pos[k * 3] = mx + q[s] * sx;
+      pos[k * 3 + 1] = my + q[s + 1] * sy;
+      pos[k * 3 + 2] = mz + q[s + 2] * sz;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setIndex(new THREE.BufferAttribute(idx.slice(i0, i0 + iN), 1));
+    geo.computeBoundingSphere();
+    geo.computeBoundingBox();
+    all.union(geo.boundingBox);
+
+    const key = dayKey(p), night = MATS[p.mat] ?? MATS.stone, day = DAY_MATS[key];
+    const mesh = new THREE.Mesh(geo, mode === 'day' ? day : night);
+    mesh.castShadow = mesh.receiveShadow = p.mat !== 'lantern';
+    mesh.userData = { name: p.name, path: p.path, night, day };
+    castle.add(mesh);
+    parts.push({ mesh, layerName: p.path.split('/')[0], key: subKey(p.path), dayKey: key });
+  }
+
+  // Compute explode offsets now that we know the castle's footprint.
+  const center = all.getCenter(new THREE.Vector3());
+  for (const part of parts) {
+    const L = LAYERS[part.layerName] ?? { lift: 0, spread: 120, order: 1 };
+    const g = groupCenters[part.key];
+    const c = g.sum.clone().divideScalar(g.n);
+    const dir = new THREE.Vector2(c.x - center.x, c.y - center.y);
+    if (dir.lengthSq() < 1) dir.set(1, 0);
+    dir.normalize().multiplyScalar(L.spread);
+    part.offset = new THREE.Vector3(dir.x, dir.y, L.lift);
+    part.order = L.order;
+  }
+
+  // Sit the castle on the ground, centered on the origin.
+  castleBaseY = -all.min.z;
+  castle.position.set(-center.x, castleBaseY, center.y);
+  ground.position.y = 0;
+  const h = all.max.z - all.min.z;
+  controls.target.set(0, h * 0.42, 0);
+  camera.position.set(h * 1.1, h * 0.75, h * 1.6);
+  moon.target.position.set(0, h * 0.4, 0);
+
+  const loader = document.getElementById('loader');
+  loader.style.opacity = 0;
+  setTimeout(() => loader.remove(), 900);
+  document.getElementById('explode').disabled = false;
+  applyTheme(mode);   // builds the star castle if the page opens in that mode
+}
+
+function subKey(path) { return path.split('/').slice(0, 2).join('/'); }
+
+async function fetchWithProgress(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(res.status + ' ' + url);
+  const total = +res.headers.get('content-length') || 0;
+  const reader = res.body.getReader();
+  const chunks = []; let got = 0;
+  const bar = document.querySelector('#bar i');
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value); got += value.length;
+    if (total) bar.style.width = Math.min(100, got / total * 100) + '%';
+  }
+  let blob = new Blob(chunks);
+  const head = new Uint8Array(await blob.slice(0, 2).arrayBuffer());
+  if (head[0] === 0x1f && head[1] === 0x8b) {   // gzip magic: unpack in the browser
+    blob = await new Response(blob.stream().pipeThrough(new DecompressionStream('gzip'))).blob();
+  }
+  return blob.arrayBuffer();
+}
+
+// ---------- Explode animation ----------
+let exploded = false, animT = 0, animating = false;
+const maxOrder = Math.max(...Object.values(LAYERS).map(l => l.order));
+const totalTime = EXPLODE_TIME + LAYER_DELAY * maxOrder;
+const ease = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+const explodeBtn = document.getElementById('explode');
+explodeBtn.addEventListener('click', () => {
+  exploded = !exploded;
+  animating = true;
+  explodeBtn.textContent = exploded ? 'Assemble' : 'Explode';
+});
+
+function updateExplode(dt) {
+  if (!animating) return;
+  animT = THREE.MathUtils.clamp(animT + (exploded ? dt : -dt), 0, totalTime);
+  for (const p of parts) {
+    // Exploding: top layers leave first. Assembling: they return last.
+    const delay = (maxOrder - p.order) * LAYER_DELAY;
+    const k = ease(THREE.MathUtils.clamp((animT - delay) / EXPLODE_TIME, 0, 1));
+    p.mesh.position.copy(p.offset).multiplyScalar(k);
+  }
+  if (animT === 0 || animT === totalTime) animating = false;
+}
+
+// ---------- Spin toggle ----------
+const spinBtn = document.getElementById('spin');
+spinBtn.addEventListener('click', () => {
+  controls.autoRotate = !controls.autoRotate;
+  spinBtn.classList.toggle('primary', controls.autoRotate);
+});
+
+// ---------- Hover labels ----------
+const label = document.getElementById('label');
+const ray = new THREE.Raycaster(), mouse = new THREE.Vector2();
+let lastPick = 0, hovered = null, pointer = null;
+const highlight = new THREE.Color(0x8f86ff);
+renderer.domElement.addEventListener('pointermove', e => { pointer = e; });
+renderer.domElement.addEventListener('pointerleave', () => { pointer = null; setHover(null); });
+
+function pick(now) {
+  if (!pointer || now - lastPick < 90 || !parts.length) return;
+  lastPick = now;
+  mouse.set(pointer.clientX / innerWidth * 2 - 1, -pointer.clientY / innerHeight * 2 + 1);
+  ray.setFromCamera(mouse, camera);
+  const hit = ray.intersectObject(castle, true)[0];
+  setHover(hit ? hit.object : null);
+  if (hovered) {
+    label.style.left = pointer.clientX + 14 + 'px';
+    label.style.top = pointer.clientY + 14 + 'px';
+  }
+}
+function setHover(obj) {
+  if (obj === hovered) return;
+  if (hovered) {
+    hovered.material.dispose();
+    hovered.material = hovered.userData.baseMat;
+    const pts = hovered.userData.starPoints;
+    if (pts && pts.material !== castleStarMat) { pts.material.dispose(); pts.material = castleStarMat; }
+  }
+  hovered = obj;
+  if (obj) {
+    obj.userData.baseMat = obj.material;
+    const m = obj.userData.baseMat.clone();
+    if (m.emissive) { m.emissive = highlight; m.emissiveIntensity = 0.35; }   // lit materials only
+    obj.material = m;
+    const pts = obj.userData.starPoints;
+    if (mode === 'stars' && pts) {
+      // Star mode: light up this part's stars instead (shares time/size uniforms so it keeps twinkling)
+      const sm = castleStarMat.clone();
+      sm.uniforms = { ...castleStarUniforms, uBright: { value: castleStarUniforms.uBright.value * 2.2 } };
+      pts.material = sm;
+    }
+    label.innerHTML = `${obj.userData.name}<small>${obj.userData.path.replaceAll('/', ' › ')}</small>`;
+    label.style.opacity = 1;
+  } else {
+    label.style.opacity = 0;
+  }
+}
+
+applyTheme(mode);   // after the hover code above is ready
+
+// ---------- Loop ----------
+const clock = new THREE.Clock();
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const now = performance.now();
+  updateExplode(dt);
+  pick(now);
+  starUniforms.uTime.value = castleStarUniforms.uTime.value = now / 1000;
+  if (THEMES[mode].floating) castle.position.y = castleBaseY + 40 + Math.sin(now / 2600) * 14;   // drifting in the void
+  controls.update();
+  composer.render();
+});
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  composer.setSize(innerWidth, innerHeight);
+});
+
+// ---------- Helpers ----------
+function skyTexture(stops) {
+  const c = document.createElement('canvas'); c.width = 4; c.height = 512;
+  const g = c.getContext('2d').createLinearGradient(0, 0, 0, 512);
+  [0, 0.45, 0.75, 1].forEach((at, i) => g.addColorStop(at, stops[i]));
+  const ctx = c.getContext('2d'); ctx.fillStyle = g; ctx.fillRect(0, 0, 4, 512);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+var starUniforms;
+function makeStars(n, fullSphere = false) {
+  const pos = new Float32Array(n * 3), size = new Float32Array(n), phase = new Float32Array(n), col = new Float32Array(n * 3);
+  const tint = [new THREE.Color(0xffffff), new THREE.Color(0xbfd0ff), new THREE.Color(0xd6c4ff), new THREE.Color(0xa9e4ff)];
+  for (let i = 0; i < n; i++) {
+    const u = Math.random(), v = fullSphere ? Math.random() * 2 : Math.random() * 0.92 + 0.08;   // full sphere, or above the horizon only
+    const th = u * Math.PI * 2, ph = Math.acos(1 - v);
+    const r = 6000 + Math.random() * 2000;
+    pos.set([r * Math.sin(ph) * Math.cos(th), r * Math.cos(ph), r * Math.sin(ph) * Math.sin(th)], i * 3);
+    size[i] = Math.pow(Math.random(), 6) * 7 + 1.2;
+    phase[i] = Math.random() * 100;
+    tint[i % 4].toArray(col, i * 3);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('size', new THREE.BufferAttribute(size, 1));
+  geo.setAttribute('phase', new THREE.BufferAttribute(phase, 1));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  starUniforms ??= { uTime: { value: 0 }, uPR: { value: renderer.getPixelRatio() }, uDim: { value: 1 }, uSize: { value: 1 } };   // shared by every starfield
+  const mat = new THREE.ShaderMaterial({
+    uniforms: starUniforms, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    vertexShader: `
+      attribute float size; attribute float phase; attribute vec3 color;
+      uniform float uTime; uniform float uPR; uniform float uDim; uniform float uSize; varying float vA; varying vec3 vC;
+      void main() {
+        vA = (0.55 + 0.45 * sin(uTime * (0.6 + fract(phase) * 2.0) + phase)) * uDim;
+        vC = color;
+        gl_PointSize = max(1.0, size * uSize * uPR);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: `
+      varying float vA; varying vec3 vC;
+      void main() {
+        float d = length(gl_PointCoord - 0.5);
+        float a = smoothstep(0.5, 0.0, d);
+        gl_FragColor = vec4(vC, a * a * vA);
+      }`,
+  });
+  const pts = new THREE.Points(geo, mat);
+  pts.frustumCulled = false;
+  return pts;
+}
+</script>
+</body>
+</html>
