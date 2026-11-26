@@ -123,7 +123,7 @@ camera.position.set(900, 700, 1300);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.06;
-controls.maxPolarAngle = Math.PI * 0.52;
+controls.maxPolarAngle = Math.PI * 0.92;   // below the ground too, for low-angle views
 controls.minDistance = 200;
 controls.maxDistance = 4000;
 controls.autoRotateSpeed = 0.5;
@@ -220,7 +220,7 @@ const THEMES = {
     ground: null, bloom: [0.85, 0.1], stars: false, voidStars: true, skyDim: 0.5, skySize: 0.65, floating: true,
     title: 'Castle of Stars', fade: '#000003' },
 };
-let mode = ['day', 'stars'].includes(localStorage.getItem('castle-mode')) ? localStorage.getItem('castle-mode') : 'night';
+let mode = 'day';   // the page always opens in daylight
 
 // ---------- Ground ----------
 const ground = new THREE.Mesh(new THREE.CircleGeometry(4000, 96),
@@ -240,7 +240,6 @@ composer.addPass(new OutputPass());
 function applyTheme(m) {
   const T = THEMES[m];
   mode = m;
-  localStorage.setItem('castle-mode', m);
   scene.background = T.sky;
   scene.fog.color.setHex(T.fog);
   scene.fog.density = T.fogDensity;
@@ -253,7 +252,7 @@ function applyTheme(m) {
   bloom.strength = T.bloom[0]; bloom.threshold = T.bloom[1];
   stars.visible = T.stars;
   voidStars.visible = !!T.voidStars;
-  controls.maxPolarAngle = T.floating ? Math.PI : Math.PI * 0.52;   // no ground in the void: orbit below too
+  controls.maxPolarAngle = T.floating ? Math.PI : Math.PI * 0.92;   // orbit below ground level for low-angle views
   moonDisc.visible = !!T.moon;
   starUniforms.uDim.value = T.skyDim ?? 1;
   starUniforms.uSize.value = T.skySize ?? 1;
@@ -461,7 +460,13 @@ async function loadCastle() {
   ground.position.y = 0;
   const h = all.max.z - all.min.z;
   controls.target.set(0, h * 0.42, 0);
-  camera.position.set(h * 1.1, h * 0.75, h * 1.6);
+  // Open facing the front: the side of the main entrance (gate and drawbridge).
+  const gate = new THREE.Vector3(), gateParts = header.parts.filter(p => p.path.startsWith('BASE/Entree principale'));
+  gateParts.forEach(p => gate.add(new THREE.Vector3(...p.center)));
+  const front = gateParts.length
+    ? new THREE.Vector3(gate.x / gateParts.length - center.x, 0, -(gate.y / gateParts.length - center.y)).normalize()
+    : new THREE.Vector3(0, 0, 1);                       // model Z-up -> world: (x, z, -y)
+  camera.position.copy(controls.target).addScaledVector(front, h * 1.85).add(new THREE.Vector3(0, h * 0.12, 0));
   moon.target.position.set(0, h * 0.4, 0);
 
   const loader = document.getElementById('loader');
