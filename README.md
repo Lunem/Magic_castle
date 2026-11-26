@@ -1,10 +1,11 @@
-# Castle by Night
+# Magic Castle
 
-An interactive 3D castle (Three.js) with an **Explode** button that lifts the castle apart layer by layer, and three looks: **Night**, **Day**, and **Stars** (the castle drawn as glowing stars, floating in the void).
+An interactive 3D castle (Three.js) with an **Explode** button that lifts the castle apart layer by layer, and four looks: **Day**, **Night**, **Stars** (the castle drawn as glowing stars, floating in the void) and **Magic** (coloured floodlights, LED-studded roofs and fireworks).
 
 - `index.html`: the whole page (Three.js is loaded from a CDN)
-- `models/castle.bin.gz`: all 637 castle parts, simplified and compressed (~7 MB)
+- `models/castle.bin.gz`: all 624 castle parts, simplified and compressed (~7 MB)
 - `tools/build_model.py`: rebuilds that file from the STL kit in `Assets/` (not committed)
+- `textures/`: stained-glass images (SVG) mapped onto window parts, listed in `STAINED_GLASS` in `index.html`. `tools/make_vitrail.py` generates them (Tour G and keep); the SVGs can also be edited by hand.
 
 ## View locally
 
