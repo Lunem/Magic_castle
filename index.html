@@ -48,6 +48,7 @@
     .ui { flex-direction: column; gap: 6px; padding: 6px; border-radius: 24px;
       bottom: calc(12px + env(safe-area-inset-bottom)); max-width: calc(100vw - 16px); }
     .actions, .seg { gap: 6px; justify-content: center; }
+    .actions { flex-wrap: wrap; }
     .seg { padding-left: 0; border-left: 0; flex-wrap: wrap; }
     button, .seg button { padding: 9px 16px; font-size: 12px; letter-spacing: .06em; }
     #err { top: 70px; left: 12px; right: 12px; }
@@ -101,6 +102,7 @@
   <span class="actions">
     <button id="explode" class="primary" disabled>Explode</button>
     <button id="spin">Spin</button>
+    <button id="enter" disabled title="Travel through the castle">Enter</button>
     <button id="labels" class="primary" title="Highlight parts and show their names on hover">Labels</button>
   </span>
   <span class="seg">
@@ -822,6 +824,7 @@ async function loadCastle() {
   loader.style.opacity = 0;
   setTimeout(() => loader.remove(), 900);
   document.getElementById('explode').disabled = false;
+  document.getElementById('enter').disabled = false;
   applyInterior();
   applyStainedGlass();   // textures load in the background
   applyTheme(mode);   // builds the star castle if the page opens in that mode
@@ -1441,6 +1444,72 @@ function setHeight(v) {
 heightInput.addEventListener('input', () => setHeight(+heightInput.value));
 heightInput.addEventListener('dblclick', () => { heightInput.value = 0; setHeight(0); });
 
+// ---------- Enter: a travelling shot through the castle ----------
+// The camera glides in from where it is, crosses the drawbridge, goes under the
+// portcullis and through the vaulted passage, comes out on the back terrace, then
+// rises and turns round to look up at the keep. Click Enter again, or drag, to stop.
+// Points are in model coordinates (mm, z up; the front faces -x). The passage is
+// clear at z -48: the portcullis and arches start higher, the back railing lower.
+const TRAVEL_TIME = 16;   // seconds
+const TRAVEL_CAMERA = [[-470, 0, -12], [-330, 0, -48], [-230, 0, -48], [-110, 0, -48],
+  [30, 0, -48], [150, 0, -48], [250, 0, -42], [400, 25, 40], [560, 110, 230]];
+const TRAVEL_LOOK = [[-210, 0, -44], [-100, 0, -48], [10, 0, -48], [120, 0, -48],
+  [240, 0, -48], [340, 0, -44], [430, 20, -10], [120, 0, 260], [-40, -18, 390]];
+const enterBtn = document.getElementById('enter');
+let travel = null;
+
+function startTravel() {
+  // Put the castle back together and stop spinning first
+  if (exploded || animating) {
+    exploded = animating = false; animT = 0;
+    for (const p of parts) p.mesh.position.set(0, 0, 0);
+    explodeBtn.textContent = 'Explode';
+  }
+  controls.autoRotate = false;
+  spinBtn.classList.remove('primary');
+  heightInput.value = 0; heightShift = 0;
+  const local = v => castle.worldToLocal(v.clone());
+  const P = [local(camera.position), ...TRAVEL_CAMERA.map(p => new THREE.Vector3(...p))];
+  const L = [local(controls.target), ...TRAVEL_LOOK.map(p => new THREE.Vector3(...p))];
+  travel = { t: 0, cam: new THREE.CatmullRomCurve3(P, false, 'centripetal'), look: new THREE.CatmullRomCurve3(L, false, 'centripetal') };
+  controls.enabled = false;
+  camera.near = 1; camera.updateProjectionMatrix();   // the passage is narrow
+  enterBtn.classList.add('primary');
+  enterBtn.textContent = 'Stop';
+  setHover(null);
+}
+
+function stopTravel() {
+  if (!travel) return;
+  // Hand the camera back to the orbit controls, looking where the shot was looking
+  const look = castle.localToWorld(travel.look.getPoint(ease(Math.min(travel.t / TRAVEL_TIME, 1))));
+  controls.target.copy(look);
+  if (camera.position.distanceTo(look) < controls.minDistance)
+    camera.position.copy(look).add(camera.position.clone().sub(look).setLength(controls.minDistance));
+  travel = null;
+  controls.enabled = true;
+  camera.near = 5; camera.fov = 38; camera.updateProjectionMatrix();
+  enterBtn.classList.remove('primary');
+  enterBtn.textContent = 'Enter';
+}
+
+function updateTravel(dt) {
+  travel.t += dt;
+  const u = Math.min(travel.t / TRAVEL_TIME, 1), k = ease(u);
+  // each stretch between two key points takes the same time, so the long approach is quick
+  camera.position.copy(castle.localToWorld(travel.cam.getPoint(k)));
+  camera.lookAt(castle.localToWorld(travel.look.getPoint(k)));
+  // wider lens inside the castle
+  const inside = THREE.MathUtils.smoothstep(k, 0.15, 0.3) * (1 - THREE.MathUtils.smoothstep(k, 0.62, 0.76));
+  camera.fov = 38 + 22 * inside;
+  camera.updateProjectionMatrix();
+  if (u >= 1) stopTravel();
+}
+
+enterBtn.addEventListener('click', () => (travel ? stopTravel() : startTravel()));
+renderer.domElement.addEventListener('pointerdown', () => stopTravel());
+renderer.domElement.addEventListener('wheel', () => stopTravel(), { passive: true });
+
 // ---------- Hover labels ----------
 const label = document.getElementById('label');
 const labelsBtn = document.getElementById('labels');
@@ -1514,7 +1583,7 @@ renderer.setAnimationLoop(() => {
   updateFireworks(now / 1000);
   updateShine(now / 1000);
   if (THEMES[mode].floating) castle.position.y = castleBaseY + 40 + Math.sin(now / 2600) * 14;   // drifting in the void
-  controls.update();
+  if (travel) updateTravel(dt); else controls.update();
   composer.render();
 });
 
