@@ -19,8 +19,10 @@
   button:hover { background: rgba(150, 140, 255, 0.25); box-shadow: 0 0 18px rgba(140, 130, 255, 0.35); }
   button.primary { background: rgba(150, 140, 255, 0.28); }
   button:disabled { opacity: .4; cursor: default; }
-  h1 { position: fixed; top: 22px; left: 28px; margin: 0; font-weight: 300; font-size: 15px;
-    letter-spacing: .35em; text-transform: uppercase; color: var(--dim); }
+  /* Title on the left, hints on the right; on phones the hints go under the title, whatever its length */
+  .top { position: fixed; top: 22px; left: 28px; right: 28px; display: flex; justify-content: space-between;
+    align-items: flex-start; gap: 16px; pointer-events: none; }
+  h1 { margin: 0; font-weight: 300; font-size: 15px; letter-spacing: .35em; text-transform: uppercase; color: var(--dim); }
   #label { position: fixed; pointer-events: none; padding: 6px 10px; border-radius: 8px;
     background: var(--glass); border: 1px solid var(--edge); font-size: 12px; white-space: nowrap;
     opacity: 0; transition: opacity .15s; }
@@ -30,7 +32,7 @@
   #bar { width: 220px; height: 2px; background: rgba(255,255,255,.08); overflow: hidden; border-radius: 2px; }
   #bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #7b6cff, #b9e2ff);
     box-shadow: 0 0 12px #9b8cff; transition: width .2s; }
-  .hint { position: fixed; top: 22px; right: 28px; color: var(--dim); font-size: 12px; text-align: right; }
+  .hint { color: var(--dim); font-size: 12px; text-align: right; }
   .seg { display: flex; gap: 4px; padding-left: 10px; border-left: 1px solid var(--edge); }
   .seg button { padding: 10px 16px; }
   .seg button.active { background: rgba(170, 160, 255, 0.4); box-shadow: inset 0 0 0 1px rgba(200, 190, 255, 0.5); }
@@ -42,15 +44,23 @@
   .hint .touch { display: none; }
   @media (pointer: coarse) { .hint .mouse { display: none; } .hint .touch { display: inline; } }
   /* Phones and narrow windows: hint under the title, menu on two rows */
+  .burger { display: none; }
   @media (max-width: 720px) {
-    h1 { top: 16px; left: 16px; font-size: 13px; letter-spacing: .28em; }
-    .hint { top: 40px; left: 16px; right: 16px; text-align: left; font-size: 11px; }
-    .ui { flex-direction: column; gap: 6px; padding: 6px; border-radius: 24px;
-      bottom: calc(12px + env(safe-area-inset-bottom)); max-width: calc(100vw - 16px); }
-    .actions, .seg { gap: 6px; justify-content: center; }
-    .actions { flex-wrap: wrap; }
-    .seg { padding-left: 0; border-left: 0; flex-wrap: wrap; }
-    button, .seg button { padding: 9px 16px; font-size: 12px; letter-spacing: .06em; }
+    .top { top: calc(14px + env(safe-area-inset-top)); left: 16px; right: 16px; flex-direction: column; gap: 6px; }
+    h1 { font-size: 13px; letter-spacing: .28em; line-height: 1.5; }
+    .hint { text-align: left; font-size: 11px; }
+    /* Phones: the menu folds into a burger button, bottom right, within thumb reach */
+    .burger { display: grid; place-items: center; position: fixed; right: 14px; bottom: calc(14px + env(safe-area-inset-bottom));
+      width: 54px; height: 54px; padding: 0; border-radius: 50%; z-index: 6;
+      background: var(--glass); backdrop-filter: blur(10px); box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25); }
+    body.menu-open .burger { background: rgba(170, 160, 255, 0.45); }
+    .ui { display: none; flex-direction: column; align-items: stretch; gap: 10px; padding: 12px; border-radius: 22px;
+      left: 12px; right: 12px; transform: none; bottom: calc(78px + env(safe-area-inset-bottom));
+      max-height: calc(100vh - 140px); overflow-y: auto; z-index: 5; }
+    body.menu-open .ui { display: flex; }
+    .actions, .seg { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .seg { padding: 10px 0 0; border-left: 0; border-top: 1px solid var(--edge); grid-template-columns: repeat(3, 1fr); }
+    button, .seg button { padding: 11px 8px; font-size: 12px; letter-spacing: .06em; }
     #err { top: 70px; left: 12px; right: 12px; }
   }
   .height { position: fixed; right: 22px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column;
@@ -71,8 +81,8 @@
   #sheet .tick { position: absolute; background: rgba(52, 51, 61, .55); }
   #sheet .tick.top, #sheet .tick.bottom { width: 1px; height: 16px; } #sheet .tick.top { top: 0; } #sheet .tick.bottom { bottom: 0; }
   #sheet .tick.left, #sheet .tick.right { height: 1px; width: 16px; } #sheet .tick.left { left: 0; } #sheet .tick.right { right: 0; }
-  body.paper h1 { font-family: Georgia, "Times New Roman", serif; top: 38px; left: 44px; }
-  body.paper .hint { top: 38px; right: 44px; }
+  body.paper h1 { font-family: Georgia, "Times New Roman", serif; }
+  body.paper .top { top: 38px; left: 44px; right: 44px; }
   #fade { position: fixed; inset: 0; pointer-events: none; opacity: 0; transition: opacity .35s ease; }
   body.day { --ink: #1f2547; --dim: #4b557e; --glass: rgba(255, 255, 255, 0.55); --edge: rgba(40, 60, 130, 0.22); }
   body.day button { background: rgba(255, 255, 255, 0.35); }
@@ -87,8 +97,10 @@
 </script>
 </head>
 <body>
+<header class="top">
 <h1>Castle by Night</h1>
 <div class="hint"><span class="mouse">Drag to orbit · Scroll to zoom · Right-drag to pan</span><span class="touch">Drag to orbit · Pinch to zoom · Two-finger drag to pan</span></div>
+</header>
 <div id="loader"><span id="loadText">Summoning the castle</span><div id="bar"><i></i></div></div>
 <div id="label"></div>
 <div id="fade"></div>
@@ -98,6 +110,9 @@
   <span>Height</span>
   <input id="height" type="range" min="-100" max="100" value="0" step="1">
 </label>
+<button id="menu" class="burger" aria-label="Menu" aria-expanded="false">
+  <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+</button>
 <div class="ui">
   <span class="actions">
     <button id="explode" class="primary" disabled>Explode</button>
@@ -112,7 +127,7 @@
     <button data-mode="magic">Magic</button>
     <button data-mode="blueprint">Blueprint</button>
     <button data-mode="shine">Shine</button>
-    <button data-mode="tales">Tales</button>
+    <button data-mode="tales">Electro</button>
   </span>
 </div>
 
@@ -288,6 +303,7 @@ const isBronze = p => (p.path === 'BATIMENTS/Rotonde/Batiment/Toiture' && p.name
 function dayKey(p) {
   const n = p.name.toLowerCase(), layer = p.path.split('/')[0];
   if (/^feuillage/.test(n)) return 'hedge';
+  if (/^rampe/.test(n)) return 'trim';               // the bridge's walkway, like its balcony ("Rampe balcon")
   if (p.mat === 'iron' || p.mat === 'lantern' || p.mat === 'grass' || p.mat === 'water') return p.mat;
   if (p.mat === 'rock' || /^rocher/.test(n)) return 'rock';
   if (/faitage|drapeau|chouette|sphere|cloche|^pointe|jonction pointe|^ornement/.test(n)) return 'gold';
@@ -333,7 +349,7 @@ THEMES.shine = { sky: SKY_MAGIC, fog: 0x07051c, fogDensity: 0.00022, exposure: 1
 THEMES.tales = { sky: SKY_MAGIC, fog: 0x07051c, fogDensity: 0.00022, exposure: 1.0,
   hemi: [0x3a2c90, 0x0a0618, 0.35], key: [0x8f9cff, 0.2, -700, 1100, 500], rim: [0xc070ff, 0.5],
   ground: 0x0a0820, bloom: [0.6, 0.5], stars: true, uplights: true, uplightScale: 0.35, fireworks: true, tales: true,
-  title: 'Castle Tales', fade: '#04031a' };
+  title: 'Electro Castle', fade: '#04031a' };
 let mode = 'day';   // the page always opens in daylight
 
 // ---------- Ground ----------
@@ -1766,6 +1782,16 @@ function updateExplode(dt) {
   }
   if (animT === 0 || animT === totalTime) animating = false;
 }
+
+// ---------- Phone menu: the controls fold into a burger button ----------
+const menuBtn = document.getElementById('menu');
+function setMenu(open) {
+  document.body.classList.toggle('menu-open', open);
+  menuBtn.setAttribute('aria-expanded', String(open));
+}
+menuBtn.addEventListener('click', () => setMenu(!document.body.classList.contains('menu-open')));
+document.querySelector('.ui').addEventListener('click', e => { if (e.target.closest('button')) setMenu(false); });
+renderer.domElement.addEventListener('pointerdown', () => setMenu(false));
 
 // ---------- Spin toggle ----------
 const spinBtn = document.getElementById('spin');
