@@ -215,7 +215,36 @@ const MATS = {
   rock:    new THREE.MeshStandardMaterial({ color: 0x67657e, roughness: 1, flatShading: true }),
   flag:    new THREE.MeshStandardMaterial({ color: 0xcfc8ff, emissive: 0x6a5cff, emissiveIntensity: 0.6, flatShading: true, side: THREE.DoubleSide }),
   lantern: new THREE.MeshStandardMaterial({ color: 0xbfe8ff, emissive: 0x9fdcff, emissiveIntensity: 2.2, flatShading: true }),
+  water:   waterMat(0x24405e, 0.08, 0.45),
 };
+
+// ---------- Water: smooth, with small moving ripples (bent normals, no extra geometry) ----------
+const waterUniforms = { uWaterTime: { value: 0 } };
+function waterMat(color, roughness, metalness, extra = {}) {
+  const m = new THREE.MeshStandardMaterial({ color, roughness, metalness, ...extra });
+  m.onBeforeCompile = sh => {
+    Object.assign(sh.uniforms, waterUniforms);
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWater, vWN, vWX, vWY;')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        vWater = position;
+        vWN = normalize(normalMatrix * vec3(0.0, 0.0, 1.0));   // model z is up
+        vWX = normalize(normalMatrix * vec3(1.0, 0.0, 0.0));
+        vWY = normalize(normalMatrix * vec3(0.0, 1.0, 0.0));`);
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWater, vWN, vWX, vWY;\nuniform float uWaterTime;')
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+      {
+        float t = uWaterTime; vec2 p = vWater.xy;
+        vec2 g = vec2(0.8, 0.3) * cos(dot(p, vec2(0.8, 0.3)) * 0.35 + t * 1.3)
+               + vec2(-0.4, 0.9) * cos(dot(p, vec2(-0.4, 0.9)) * 0.5 + t * 1.7) * 0.7
+               + vec2(0.6, -0.7) * cos(dot(p, vec2(0.6, -0.7)) * 0.9 - t * 2.1) * 0.4;
+        normal = normalize(vWN - 0.12 * (g.x * vWX + g.y * vWY));
+      }`);
+  };
+  m.customProgramCacheKey = () => 'water';
+  return m;
+}
 
 // ---------- Materials (day): palette taken from the kit's colour renders ----------
 const std = (color, roughness, metalness = 0, extra = {}) =>
@@ -235,6 +264,7 @@ const DAY_MATS = {
   hedge:   std(0x3b6a32, 0.95),          // topiary trees: dark clipped foliage
   rock:    std(0xcac7c2, 0.95),
   lantern: std(0xf4e6b8, 0.3, 0.2, { emissive: 0xffd98a, emissiveIntensity: 0.25 }),
+  water:   waterMat(0x5fa595, 0.1, 0.15),    // green-turquoise, like the basin on the photos
 };
 
 // Magic: day colours under coloured floodlights, dark roofs for the LEDs, warm windows
@@ -242,6 +272,7 @@ const MAGIC_MATS = { ...DAY_MATS,
   roof:    std(0x18204f, 0.35, 0.45),
   lantern: std(0xffe2a0, 0.3, 0, { emissive: 0xffbf5a, emissiveIntensity: 2.6 }),
   glass:   std(0x2c4e88, 0.15, 0.3, { emissive: 0xffb860, emissiveIntensity: 0.9 }),
+  water:   waterMat(0x102838, 0.06, 0.55),   // dark, catching the coloured lights
 };
 
 // Bronze / copper brown parts: the rotonde roof (not slate blue; the LEDs still light it in Magic)
@@ -257,7 +288,7 @@ const isBronze = p => (p.path === 'BATIMENTS/Rotonde/Batiment/Toiture' && p.name
 function dayKey(p) {
   const n = p.name.toLowerCase(), layer = p.path.split('/')[0];
   if (/^feuillage/.test(n)) return 'hedge';
-  if (p.mat === 'iron' || p.mat === 'lantern' || p.mat === 'grass') return p.mat;
+  if (p.mat === 'iron' || p.mat === 'lantern' || p.mat === 'grass' || p.mat === 'water') return p.mat;
   if (p.mat === 'rock' || /^rocher/.test(n)) return 'rock';
   if (/faitage|drapeau|chouette|sphere|cloche|^pointe|jonction pointe|^ornement/.test(n)) return 'gold';
   if (/arbre|branche|^tronc/.test(n)) return 'tree';
@@ -384,7 +415,7 @@ document.querySelectorAll('[data-mode]').forEach(btn => btn.addEventListener('cl
 // mode the mesh itself only writes depth: it stays invisible but hides the stars
 // behind it, which keeps the silhouette readable.
 const DEPTH_ONLY = new THREE.MeshBasicMaterial({ colorWrite: false });
-const STAR_TINT = { hedge: 0x8fe0a8, gold: 0xffdca0, roof: 0xa8b8ff, glass: 0x9aaeff, grass: 0xa8e8d4, rock: 0xcfd0ee,
+const STAR_TINT = { water: 0x7fd8ff, hedge: 0x8fe0a8, gold: 0xffdca0, roof: 0xa8b8ff, glass: 0x9aaeff, grass: 0xa8e8d4, rock: 0xcfd0ee,
   tree: 0xd6c6ff, timber: 0xe6d4ff, lantern: 0xfff1c8, brick: 0xffc8d8, wall: 0xf1e8ff };
 const CASTLE_STAR_COUNT = innerWidth < 800 ? 85000 : 160000;   // density of the star castle
 const SURFACE_LIFT = 0.35;   // mm: keeps each star just in front of its surface
@@ -399,6 +430,7 @@ const STAR_FOCUS = [
   { match: p => p.path === 'DONJON/Toiture' || (p.path === 'DONJON/Corps partie superieure' && p.name === 'Corps superieur'),
     count: 2.2, glow: 1.7 },                                              // top of the keep: spire, roof, upper body
   { match: p => p.path === 'ROCHERS/Colline', count: 0.4, glow: 0.8 },   // the big hill: keep it in the background
+  { match: p => p.path === 'BASE/Bassin', count: 0.5, glow: 0.7 },       // the water: a faint shimmer
   { match: p => p.name.startsWith('Ornement'), count: 10, glow: 1.2 },   // gilded fleur-de-lys over the oval windows: tiny, needs more stars
   { match: p => STAINED_GLASS.some(g => g.path === p.path && g.name === p.name), count: 30, glow: 1.3 },   // stained glass: small and flat, needs many stars to show its pattern and oval rim (not too bright, or the colours wash out to white)
 ];
@@ -787,7 +819,7 @@ async function loadCastle() {
     geo.setIndex(new THREE.BufferAttribute(idx.slice(i0, i0 + iN), 1));
     geo.computeBoundingSphere();
     geo.computeBoundingBox();
-    if (!p.path.startsWith('ROCHERS/Colline')) all.union(geo.boundingBox);   // frame the castle, not the scenery around it
+    if (!/^ROCHERS\/Colline|^BASE\/Rampe d'acces|^BASE\/Bassin/.test(p.path)) all.union(geo.boundingBox);   // frame the castle itself, not the bridge or scenery in front
 
     const key = dayKey(p), bronze = isBronze(p);
     const night = bronze ? BRONZE.night : MATS[p.mat] ?? MATS.stone, day = bronze ? BRONZE.day : DAY_MATS[key];
@@ -1889,7 +1921,7 @@ renderer.setAnimationLoop(() => {
   const now = performance.now();
   updateExplode(dt);
   pick(now);
-  starUniforms.uTime.value = castleStarUniforms.uTime.value = now / 1000;
+  starUniforms.uTime.value = castleStarUniforms.uTime.value = waterUniforms.uWaterTime.value = now / 1000;
   updateFireworks(now / 1000);
   updateShine(now / 1000);
   updateTales(now / 1000, dt);

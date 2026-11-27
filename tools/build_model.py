@@ -55,8 +55,21 @@ ORNAMENTS = [  # folder, name, anchor in the castle (x, y, z), lean back (deg), 
     ("DONJON/Corps partie superieure", "Ornement vitrail droit", (-17.7, -18.0, 477.7), 17.7, 0.7, True),
 ]
 
+# Whole folders modelled in their own frame and never moved into place: (R, t), same convention.
+# "Rampe d'acces" is the stone bridge with balustrades that leads up to the drawbridge. In its
+# file it runs along +y, from the ground (z 0) up to the balcony platform (z 60.8, at y 140).
+# Turned to run along +x and lowered to the ground (z -138.4), the platform meets the front
+# edge of the drawbridge (x -275.8) exactly at deck height (z -77.6).
+PLACEMENT_FOLDERS = {
+    "base/rampe d'acces/": (
+        np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]),
+        np.array([-415.8, -0.5, -138.4]),
+    ),
+}
+
 MATERIAL_RULES = [  # first match wins, tested on the lowercase file name (folder path only where noted)
     ("lantern", r"lanterne"),
+    ("water",   r"^eau "),
     ("flag",    r"drapeau"),
     ("iron",    r"rambarde fer|grille|herse|chaine"),
     ("timber",  r"colombage|porte|pont levis|charpente|volet|tronc"),
@@ -148,10 +161,14 @@ def main():
     meshes = []
     for i, rel in enumerate(files):
         raw = load_stl(os.path.join(ASSETS, rel)).reshape(-1, 3)
-        fix = PLACEMENT.get(rel.lower().replace(os.sep, "/"))
+        key = rel.lower().replace(os.sep, "/")
+        fix = PLACEMENT.get(key)
         if fix:
             raw = np.einsum("ij,jk->ik", raw, fix[0]) + fix[1]
             rel = os.path.join(fix[2], os.path.basename(rel))
+        for folder, (R, t) in PLACEMENT_FOLDERS.items():
+            if key.startswith(folder):
+                raw = np.einsum("ij,jk->ik", raw, R) + t
         v, f = weld(raw)
         meshes.append([rel, v, f])
         print(f"\rload {i+1}/{len(files)}", end="", file=sys.stderr)
@@ -162,7 +179,7 @@ def main():
     # Scenery: the hill on the left, and topiary trees on it and on top of the rocks
     rock_grass = np.concatenate([v[f] for rel, v, f in meshes
                                  if rel.replace(os.sep, "/").startswith("ROCHERS/") and "herbe" in rel.lower()])
-    for rel, tris in landscape.hill() + landscape.trees(rock_grass):
+    for rel, tris in landscape.hill() + landscape.trees(rock_grass) + landscape.basin():
         v, f = weld(tris.reshape(-1, 3))
         meshes.append([rel, v, f])
 
