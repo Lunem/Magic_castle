@@ -112,6 +112,7 @@
     <button data-mode="magic">Magic</button>
     <button data-mode="blueprint">Blueprint</button>
     <button data-mode="shine">Shine</button>
+    <button data-mode="tales">Tales</button>
   </span>
 </div>
 
@@ -298,6 +299,10 @@ THEMES.shine = { sky: SKY_MAGIC, fog: 0x07051c, fogDensity: 0.00022, exposure: 1
   hemi: [0x6a58e0, 0x140a30, 0.55], key: [0x9fa8ff, 0.3, -700, 1100, 500], rim: [0xd070ff, 0.8],
   ground: 0x0a0820, bloom: [0.5, 0.62], stars: true, uplights: true, uplightScale: 0.45, shine: true,
   title: 'Shining Castle', fade: '#04031a' };
+THEMES.tales = { sky: SKY_MAGIC, fog: 0x07051c, fogDensity: 0.00022, exposure: 1.0,
+  hemi: [0x3a2c90, 0x0a0618, 0.35], key: [0x8f9cff, 0.2, -700, 1100, 500], rim: [0xc070ff, 0.5],
+  ground: 0x0a0820, bloom: [0.6, 0.5], stars: true, uplights: true, uplightScale: 0.35, fireworks: true, tales: true,
+  title: 'Castle Tales', fade: '#04031a' };
 let mode = 'day';   // the page always opens in daylight
 
 // ---------- Ground ----------
@@ -339,6 +344,9 @@ function applyTheme(m) {
   if (m === 'stars' && parts.length && !castleStarsBuilt) buildCastleStars();
   if (m === 'blueprint' && parts.length && !blueprintBuilt) buildBlueprint();
   if (m === 'shine' && parts.length && !shineBuilt) buildShine();
+  if (m === 'tales' && parts.length && !talesBuilt) buildTales();
+  if (T.tales && !talesGroup.visible) droneClock = 0;   // the drones take off again each time
+  talesGroup.visible = !!T.tales;
   shineGroup.visible = !!T.shine;
   tipLight.intensity = T.shine ? 1.0 : 0;
   for (const u of UPLIGHTS) u.light.intensity = T.uplights ? u.intensity * (T.uplightScale ?? 1) : 0;
@@ -349,6 +357,7 @@ function applyTheme(m) {
     if (p.stars) p.stars.visible = m === 'stars';
     if (p.leds) p.leds.visible = !!T.leds;
     if (p.lines) p.lines.visible = m === 'blueprint';
+    if (p.neon) p.neon.visible = m === 'tales';
   }
   if (!T.floating) castle.position.y = castleBaseY;
   document.body.classList.toggle('day', m === 'day' || !!T.paper);   // dark text on light backgrounds
@@ -818,6 +827,7 @@ async function loadCastle() {
   castleHeight = h;
   placeUplights(front, h);
   placeShineBeams(front, h);
+  placeTalesLasers(front, h);
   moon.target.position.set(0, h * 0.4, 0);
 
   const loader = document.getElementById('loader');
@@ -875,6 +885,7 @@ async function applyStainedGlass() {
       ud.glass = { pixels: ctx.getImageData(0, 0, GLASS_TEX_W, GLASS_TEX_H).data, uvOf };
       if (blueprintBuilt) { ud.blueprint = blueprintGlassMat(tex); if (mode === 'blueprint') part.mesh.material = ud.blueprint; }
       if (shineBuilt) { ud.shine = shineMaterial(ud.magic); if (mode === 'shine') part.mesh.material = ud.shine; }
+      if (talesBuilt) { ud.tales = talesMaterial(ud.magic, 'glass'); if (mode === 'tales') part.mesh.material = ud.tales; }
       if (part.stars) colorStarsFromGlass(part);
     } catch (e) {
       showError(e);
@@ -1377,6 +1388,305 @@ function updateShine(t) {
   tipFlare.scale.setScalar(shineHeight * 0.06 * pulse);
 }
 
+// ---------- Tales: night show with projection mapping, lasers, fireworks and a drone show ----------
+// The castle goes dark and its architecture is redrawn in neon: every edge lit as a
+// coloured line with LED dots, pulses running upwards; the rocks become a pixel screen.
+// Laser fans sweep the sky from both sides, fireworks go off as in Magic (the roofs
+// don't sparkle here), and drones draw figures behind the castle.
+const talesUniforms = { uTalesTime: { value: 0 } };
+let talesBuilt = false;
+const talesMatCache = new Map();
+// The walls go almost black; the rocks become a pixel screen (orange at the bottom,
+// pink, then violet at the top); windows glow green.
+function talesMaterial(base, kind) {
+  const key = kind + '|' + base.uuid;
+  if (talesMatCache.has(key)) return talesMatCache.get(key);
+  const m = base.clone();
+  m.polygonOffset = true; m.polygonOffsetFactor = 1; m.polygonOffsetUnits = 1;   // neon lines stay in front
+  const prev = base.onBeforeCompile, prevKey = base.customProgramCacheKey.call(base);
+  m.onBeforeCompile = (sh, r) => {
+    prev.call(m, sh, r);   // keeps the textured interiors
+    Object.assign(sh.uniforms, talesUniforms);
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vTales;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvTales = position;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>
+      varying vec3 vTales; uniform float uTalesTime;
+      vec3 talesGlow(vec3 p) {
+        float t = uTalesTime;
+        ${kind === 'rock' ? `
+        vec3 n = abs(normalize(cross(dFdx(p), dFdy(p))));
+        vec2 uv = n.z > max(n.x, n.y) ? p.xy : (n.x > n.y ? p.yz : p.xz);
+        vec2 cell = floor(uv / 3.4);
+        float dotMask = smoothstep(0.36, 0.2, length(fract(uv / 3.4) - 0.5));
+        float h = clamp((p.z + 138.0) / 300.0, 0.0, 1.0);
+        vec3 col = mix(vec3(1.0, 0.5, 0.12), vec3(1.0, 0.25, 0.7), smoothstep(0.0, 0.5, h));
+        col = mix(col, vec3(0.45, 0.3, 1.0), smoothstep(0.45, 1.0, h));
+        float tw = 0.55 + 0.45 * sin(t * 2.0 + fract(sin(dot(cell, vec2(12.99, 78.23))) * 437.5) * 6.28);
+        float wave = 0.6 + 0.4 * sin(p.z * 0.03 - t * 1.5);
+        return col * dotMask * tw * wave * 0.6;` : kind === 'glass' ? `
+        return vec3(0.2, 1.0, 0.4) * (0.4 + 0.18 * sin(t * 1.5));` : `
+        return vec3(0.05, 0.02, 0.12);`}
+      }`)
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ndiffuseColor.rgb *= 0.16;\ntotalEmissiveRadiance = talesGlow(vTales);');
+  };
+  m.customProgramCacheKey = () => 'tales-' + kind + '|' + prevKey;
+  talesMatCache.set(key, m);
+  return m;
+}
+
+// Neon outlines: every sharp edge of the castle, as a line plus a row of LED dots.
+// Colour by kind of part: walls magenta, trims and frames green, roofs cyan,
+// gilding yellow, wood orange, ironwork violet. Light pulses run up the castle.
+const NEON = { wall: 0xff2fd0, base: 0x9a5cff, trim: 0x3dff6a, roof: 0x2fd0ff, gold: 0xffd23d, timber: 0xff8a2f,
+  iron: 0xb070ff, glass: 0x3dff6a, brick: 0xff4f7a, lantern: 0xffe28a, tree: 0x3dff6a, hedge: 0x3dff6a, grass: 0x3dff6a };
+const neonUniforms = { uTime: talesUniforms.uTalesTime, uPR: { value: renderer.getPixelRatio() }, uScale: { value: 1300 } };
+const neonLineMat = new THREE.ShaderMaterial({
+  uniforms: neonUniforms, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  vertexShader: `
+    attribute vec3 color; uniform float uTime; varying vec3 vC;
+    void main() {
+      float pulse = 0.55 + 0.45 * smoothstep(0.6, 1.0, sin(position.z * 0.025 - uTime * 2.2));
+      vC = color * pulse * 0.7;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }`,
+  fragmentShader: `varying vec3 vC; void main() { gl_FragColor = vec4(vC, 1.0); }`,
+});
+const neonDotMat = new THREE.ShaderMaterial({
+  uniforms: neonUniforms, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  vertexShader: `
+    attribute vec3 color; uniform float uTime, uPR, uScale; varying vec3 vC;
+    void main() {
+      vec4 mv = modelViewMatrix * vec4(position, 1.0);
+      float pulse = 0.5 + 0.5 * smoothstep(0.5, 1.0, sin(position.z * 0.025 - uTime * 2.2));
+      vC = color * pulse;
+      gl_PointSize = clamp(1.6 * uPR * uScale / -mv.z, 1.0, 5.0 * uPR);
+      gl_Position = projectionMatrix * mv;
+    }`,
+  fragmentShader: `
+    varying vec3 vC;
+    void main() { float a = smoothstep(0.5, 0.1, length(gl_PointCoord - 0.5)); gl_FragColor = vec4(vC * 0.9, a); }`,
+});
+const NEON_DOT_SPACING = 4.5;   // mm between LED dots along the edges
+
+function buildTales() {
+  talesBuilt = true;
+  const c = new THREE.Color();
+  for (const p of parts) {
+    const ud = p.mesh.userData;
+    const kind = p.dayKey === 'rock' ? 'rock' : (ud.glass || p.dayKey === 'glass') ? 'glass' : 'dark';
+    ud.tales = talesMaterial(ud.magic, kind);
+    if (kind === 'rock') continue;                     // the rocks are a pixel screen instead
+    const { segs, P } = edgeSampler(p.mesh.geometry);
+    const n = segs.length / 5;
+    if (!n) continue;
+    c.setHex(NEON[p.dayKey] ?? NEON.wall);
+    const roof = p.dayKey === 'roof';                  // tiled roofs have a lot of edges: keep them dim, no dots
+    if (roof) c.multiplyScalar(0.4);
+    const lp = new Float32Array(n * 6), lc = new Float32Array(n * 6), dp = [], dc = [];
+    for (let k = 0; k < n; k++) {
+      const a = segs[k * 5] * 3, b = segs[k * 5 + 1] * 3;
+      lp.set([P[a], P[a + 1], P[a + 2], P[b], P[b + 1], P[b + 2]], k * 6);
+      lc.set([c.r, c.g, c.b, c.r, c.g, c.b], k * 6);
+      const len = Math.hypot(P[b] - P[a], P[b + 1] - P[a + 1], P[b + 2] - P[a + 2]);
+      for (let d = Math.random() * NEON_DOT_SPACING; !roof && d < len; d += NEON_DOT_SPACING) {
+        const f = d / len;
+        dp.push(P[a] + (P[b] - P[a]) * f, P[a + 1] + (P[b + 1] - P[a + 1]) * f, P[a + 2] + (P[b + 2] - P[a + 2]) * f);
+        dc.push(c.r, c.g, c.b);
+      }
+    }
+    const lg = new THREE.BufferGeometry();
+    lg.setAttribute('position', new THREE.BufferAttribute(lp, 3));
+    lg.setAttribute('color', new THREE.BufferAttribute(lc, 3));
+    lg.boundingSphere = p.mesh.geometry.boundingSphere;
+    const lines = new THREE.LineSegments(lg, neonLineMat);
+    const dg = new THREE.BufferGeometry();
+    dg.setAttribute('position', new THREE.Float32BufferAttribute(dp, 3));
+    dg.setAttribute('color', new THREE.Float32BufferAttribute(dc, 3));
+    dg.boundingSphere = p.mesh.geometry.boundingSphere;
+    const dots = new THREE.Points(dg, neonDotMat);
+    const neon = new THREE.Group();
+    neon.add(lines, dots);
+    lines.raycast = dots.raycast = () => {};
+    p.mesh.add(neon);
+    p.neon = neon;
+  }
+}
+
+const talesGroup = new THREE.Group();
+talesGroup.visible = false;
+scene.add(talesGroup);
+
+// Laser fans: two projectors on the ground in front, left (pink) and right (green),
+// each sweeping a fan of beams across the sky.
+const LASERS_PER_FAN = 7;
+const laserUniforms = { uTime: { value: 0 }, uLen: { value: 1500 }, uWidth: { value: 2.5 },
+  uFront: { value: new THREE.Vector3(0, 0, 1) }, uRight: { value: new THREE.Vector3(1, 0, 0) } };
+const laserMat = new THREE.ShaderMaterial({
+  uniforms: laserUniforms, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  vertexShader: `
+    attribute vec3 aOrigin; attribute vec4 aAim; attribute vec2 aBeam;   // aim: azimuth, elevation, phase, colour; beam: side, t
+    uniform float uTime, uLen, uWidth; uniform vec3 uFront, uRight;
+    varying float vSide, vT; varying vec3 vCol;
+    void main() {
+      float az = aAim.x + 0.35 * sin(uTime * 0.55 + aAim.z);
+      float el = aAim.y + 0.12 * sin(uTime * 0.8 + aAim.z * 1.7);
+      vec3 d = normalize(cos(el) * (cos(az) * uRight + sin(az) * uFront) + vec3(0.0, sin(el), 0.0));
+      vec3 P = aOrigin + d * uLen * aBeam.y;
+      vec3 s = normalize(cross(d, cameraPosition - P));
+      P += s * aBeam.x * uWidth * mix(1.0, 3.0, aBeam.y);
+      vSide = aBeam.x; vT = aBeam.y;
+      vCol = aAim.w < 0.5 ? vec3(1.0, 0.25, 0.85) : vec3(0.25, 1.0, 0.35);
+      gl_Position = projectionMatrix * viewMatrix * vec4(P, 1.0);
+    }`,
+  fragmentShader: `
+    uniform float uTime;
+    varying float vSide, vT; varying vec3 vCol;
+    void main() {
+      float core = 1.0 - abs(vSide);
+      gl_FragColor = vec4(mix(vCol, vec3(1.0), core * core * 0.4) * core * pow(1.0 - vT, 1.4) * 0.9, 1.0);
+    }`,
+});
+const laserGeo = new THREE.BufferGeometry();
+const lasers = new THREE.Mesh(laserGeo, laserMat);
+lasers.frustumCulled = false;
+talesGroup.add(lasers);
+
+// Drone show: points flying between figures drawn behind the castle, always facing you.
+const DRONES = innerWidth < 800 ? 360 : 560;
+const droneUniforms = { uTime: { value: 0 }, uPR: { value: renderer.getPixelRatio() } };
+const droneMat = new THREE.ShaderMaterial({
+  uniforms: droneUniforms, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  vertexShader: `
+    attribute vec3 color; attribute float phase;
+    uniform float uTime, uPR; varying vec3 vC; varying float vA;
+    void main() {
+      vC = color;
+      vA = 0.8 + 0.2 * sin(uTime * 3.0 + phase);
+      gl_PointSize = 4.2 * uPR;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }`,
+  fragmentShader: `
+    varying vec3 vC; varying float vA;
+    void main() {
+      float d = length(gl_PointCoord - 0.5);
+      float a = smoothstep(0.5, 0.0, d);
+      gl_FragColor = vec4(mix(vC, vec3(1.0), smoothstep(0.2, 0.0, d) * 0.6) * 1.4, a * vA);
+    }`,
+});
+const droneGeo = new THREE.BufferGeometry();
+const dronePos = new Float32Array(DRONES * 3), droneCol = new Float32Array(DRONES * 3), dronePhase = new Float32Array(DRONES);
+for (let i = 0; i < DRONES; i++) dronePhase[i] = Math.random() * 6.28;
+droneGeo.setAttribute('position', new THREE.BufferAttribute(dronePos, 3));
+droneGeo.setAttribute('color', new THREE.BufferAttribute(droneCol, 3));
+droneGeo.setAttribute('phase', new THREE.BufferAttribute(dronePhase, 1));
+const drones = new THREE.Points(droneGeo, droneMat);
+drones.frustumCulled = false;
+talesGroup.add(drones);
+
+// Figures, drawn in a 2D frame (x right, y up, about -1..1) as coloured strokes.
+// All original designs.
+const circle = (cx, cy, rx, ry = rx, a0 = 0, a1 = Math.PI * 2, n = 40) =>
+  Array.from({ length: n + 1 }, (_, i) => { const a = a0 + (a1 - a0) * i / n; return [cx + Math.cos(a) * rx, cy + Math.sin(a) * ry]; });
+const mirror = pts => pts.map(([x, y]) => [-x, y]);
+const heart = (cx, cy, r, n = 60) => Array.from({ length: n + 1 }, (_, i) => {   // classic heart curve
+  const t = i / n * Math.PI * 2;
+  return [cx + r * 16 * Math.sin(t) ** 3 / 16, cy + r * (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)) / 16];
+});
+const DRONE_FIGURES = [
+  // laid out around the castle: the middle of the frame (|x| < 0.8) is where the castle stands
+  { name: 'hearts', strokes: [
+    [0xff4f9a, heart(-1.55, 0.35, 0.5)], [0xff9ad0, heart(-1.55, 0.4, 0.3)],      // big heart on the left
+    [0xc070ff, heart(1.5, 0.55, 0.38)], [0xff9ad0, heart(1.5, 0.6, 0.2)],         // another on the right
+    [0xff3d6a, heart(-0.95, 1.2, 0.16)], [0xff4f9a, heart(1.0, 1.35, 0.14)],      // little ones floating higher up
+    [0xff9ad0, heart(-2.05, -0.45, 0.13)], [0xff3d6a, heart(2.05, -0.3, 0.15)],
+    [0xc070ff, heart(-1.0, -0.6, 0.12)], [0xff4f9a, heart(1.05, -0.5, 0.11)],
+  ] },
+  { name: 'shooting star', strokes: [
+    [0xffe14d, Array.from({ length: 11 }, (_, i) => { const r = i % 2 ? 0.17 : 0.42, a = Math.PI / 2 + i * Math.PI / 5; return [1.6 + Math.cos(a) * r, 0.95 + Math.sin(a) * r]; })],
+    [0xff5fd0, circle(1.6, -1.6, 3.1, 2.5, Math.PI * 0.52, Math.PI * 0.86)],   // trails arching over the castle
+    [0x45e0ff, circle(1.6, -1.75, 3.1, 2.5, Math.PI * 0.53, Math.PI * 0.88)],
+    [0xb06bff, circle(1.6, -1.9, 3.1, 2.5, Math.PI * 0.54, Math.PI * 0.9)],
+    ...[[-1.9, 0.2], [-1.3, -0.5], [-2.2, -0.9], [1.2, -0.4], [2.1, 0.1]].map(([x, y]) => [0xffffff, [[x - 0.07, y], [x + 0.07, y], [x, y], [x, y + 0.07], [x, y - 0.07]]]),
+  ] },
+];
+function sampleFigure(fig, n) {
+  const segs = [];
+  for (const [color, pts] of fig.strokes) for (let i = 0; i < pts.length - 1; i++) {
+    const len = Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]);
+    if (len > 0) segs.push({ a: pts[i], b: pts[i + 1], len, color: new THREE.Color(color) });
+  }
+  const total = segs.reduce((s, x) => s + x.len, 0), out = [];
+  let acc = 0, k = 0;
+  for (let i = 0; i < n; i++) {
+    const d = (i + 0.5) / n * total;
+    while (k < segs.length - 1 && acc + segs[k].len < d) acc += segs[k++].len;
+    const f = (d - acc) / segs[k].len, s = segs[k];
+    out.push({ x: s.a[0] + (s.b[0] - s.a[0]) * f, y: s.a[1] + (s.b[1] - s.a[1]) * f, c: s.color });
+  }
+  return out;
+}
+const droneShapes = DRONE_FIGURES.map(f => sampleFigure(f, DRONES));
+// on the ground before take-off: a grid behind the castle
+// waiting on the ground behind the castle (y -1.58 puts them at ground level: frame centre 0.8 h, scale 0.5 h)
+const droneGround = Array.from({ length: DRONES }, (_, i) => ({ x: ((i % 40) / 39 - 0.5) * 4.4 + Math.floor(i / 40) * 0.004, y: -1.58, c: new THREE.Color(0x8090ff) }));
+const DRONE_HOLD = 9, DRONE_MOVE = 3.5, DRONE_DELAY = 6;   // seconds; the drones wait on the ground before taking off
+let droneClock = 0, droneAway = new THREE.Vector3(0, 0, -1);
+
+function placeTalesLasers(front, h) {
+  const right = new THREE.Vector3().crossVectors(front, new THREE.Vector3(0, 1, 0)).negate();
+  laserUniforms.uFront.value.copy(front); laserUniforms.uRight.value.copy(right);
+  laserUniforms.uLen.value = h * 2.2; laserUniforms.uWidth.value = h * 0.003;
+  const origin = [], aim = [], beam = [], index = [];
+  let v = 0;
+  for (const side of [-1, 1]) {
+    const o = front.clone().multiplyScalar(h * 0.35).addScaledVector(right, side * h * 0.75).setY(h * 0.02);
+    for (let i = 0; i < LASERS_PER_FAN; i++) {
+      const k = i / (LASERS_PER_FAN - 1);
+      const az = side < 0 ? Math.PI - (0.15 + 1.1 * k) : 0.15 + 1.1 * k;   // fanning outwards and up
+      for (const t of [0, 1]) for (const s of [-1, 1]) { origin.push(o.x, o.y, o.z); aim.push(az, 0.45 + 0.5 * k, i * 1.9 + side, side < 0 ? 0 : 1); beam.push(s, t); }
+      index.push(v, v + 1, v + 3, v, v + 3, v + 2);
+      v += 4;
+    }
+  }
+  laserGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(v * 3), 3));
+  laserGeo.setAttribute('aOrigin', new THREE.Float32BufferAttribute(origin, 3));
+  laserGeo.setAttribute('aAim', new THREE.Float32BufferAttribute(aim, 4));
+  laserGeo.setAttribute('aBeam', new THREE.Float32BufferAttribute(beam, 2));
+  laserGeo.setIndex(index);
+}
+
+function updateTales(t, dt) {
+  if (!talesGroup.visible) return;
+  talesUniforms.uTalesTime.value = t;
+  laserUniforms.uTime.value = droneUniforms.uTime.value = t;
+  // the show stands behind the castle as seen from the camera, turning slowly to face you
+  const away = controls.target.clone().sub(camera.position).setY(0).normalize();
+  droneAway.lerp(away, Math.min(1, dt * 0.8)).normalize();
+  const right = new THREE.Vector3(-droneAway.z, 0, droneAway.x).negate();
+  const h = castleHeight, size = h * 0.5;
+  const centre = new THREE.Vector3(0, h * 0.8, 0).addScaledVector(droneAway, h * 0.35);   // just behind the castle, figures on either side
+  // timeline: take off, then each figure holds for a while before the drones fly to the next
+  droneClock += dt;
+  const cycle = DRONE_HOLD + DRONE_MOVE, n = droneShapes.length, clock = Math.max(0, droneClock - DRONE_DELAY);
+  const step = Math.floor(clock / cycle), within = clock - step * cycle;
+  const from = step === 0 ? droneGround : droneShapes[(step - 1) % n], to = droneShapes[step % n];
+  const u = Math.min(within / DRONE_MOVE, 1);
+  for (let i = 0; i < DRONES; i++) {
+    const k = ease(THREE.MathUtils.clamp(u * 1.5 - (i / DRONES) * 0.5, 0, 1));   // staggered departures
+    const a = from[i], b = to[i];
+    const x = a.x + (b.x - a.x) * k, y = a.y + (b.y - a.y) * k;
+    const lift = Math.sin(Math.PI * k) * 0.25;                                     // swoop towards you mid-flight
+    const p = centre.clone().addScaledVector(right, x * size).setY(centre.y + y * size).addScaledVector(droneAway, -lift * size);
+    p.toArray(dronePos, i * 3);
+    droneCol[i * 3] = a.c.r + (b.c.r - a.c.r) * k;
+    droneCol[i * 3 + 1] = a.c.g + (b.c.g - a.c.g) * k;
+    droneCol[i * 3 + 2] = a.c.b + (b.c.b - a.c.b) * k;
+  }
+  droneGeo.attributes.position.needsUpdate = droneGeo.attributes.color.needsUpdate = true;
+}
+
 function subKey(path) { return path.split('/').slice(0, 2).join('/'); }
 
 async function fetchWithProgress(url) {
@@ -1582,6 +1892,7 @@ renderer.setAnimationLoop(() => {
   starUniforms.uTime.value = castleStarUniforms.uTime.value = now / 1000;
   updateFireworks(now / 1000);
   updateShine(now / 1000);
+  updateTales(now / 1000, dt);
   if (THEMES[mode].floating) castle.position.y = castleBaseY + 40 + Math.sin(now / 2600) * 14;   // drifting in the void
   if (travel) updateTravel(dt); else controls.update();
   composer.render();
