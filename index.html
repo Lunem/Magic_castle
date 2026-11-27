@@ -48,10 +48,30 @@
     .ui { flex-direction: column; gap: 6px; padding: 6px; border-radius: 24px;
       bottom: calc(12px + env(safe-area-inset-bottom)); max-width: calc(100vw - 16px); }
     .actions, .seg { gap: 6px; justify-content: center; }
-    .seg { padding-left: 0; border-left: 0; }
+    .seg { padding-left: 0; border-left: 0; flex-wrap: wrap; }
     button, .seg button { padding: 9px 16px; font-size: 12px; letter-spacing: .06em; }
     #err { top: 70px; left: 12px; right: 12px; }
   }
+  .height { position: fixed; right: 22px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column;
+    align-items: center; gap: 8px; padding: 12px 8px; border-radius: 999px; background: var(--glass);
+    border: 1px solid var(--edge); backdrop-filter: blur(10px); color: var(--dim); font-size: 10px;
+    letter-spacing: .12em; text-transform: uppercase; }
+  .height input { writing-mode: vertical-lr; direction: rtl; width: 22px; height: 180px; margin: 0;
+    accent-color: #9b8cff; cursor: ns-resize; }
+  @media (max-width: 720px) { .height { right: 8px; padding: 10px 4px; } .height input { height: 130px; } }
+  /* Blueprint: drawing-sheet frame with grid references */
+  #sheet { display: none; position: fixed; inset: 10px; pointer-events: none; border: 1px solid rgba(52, 51, 61, .5);
+    font: 11px/1 Georgia, "Times New Roman", serif; color: rgba(52, 51, 61, .75); }
+  body.paper #sheet { display: block; }
+  #sheet::after { content: ''; position: absolute; inset: 16px; border: 1.5px solid rgba(52, 51, 61, .7); }
+  #sheet .ref { position: absolute; transform: translate(-50%, -50%); }
+  #sheet .ref.top { top: 8px; } #sheet .ref.bottom { top: calc(100% - 8px); }
+  #sheet .ref.left { left: 8px; } #sheet .ref.right { left: calc(100% - 8px); }
+  #sheet .tick { position: absolute; background: rgba(52, 51, 61, .55); }
+  #sheet .tick.top, #sheet .tick.bottom { width: 1px; height: 16px; } #sheet .tick.top { top: 0; } #sheet .tick.bottom { bottom: 0; }
+  #sheet .tick.left, #sheet .tick.right { height: 1px; width: 16px; } #sheet .tick.left { left: 0; } #sheet .tick.right { right: 0; }
+  body.paper h1 { font-family: Georgia, "Times New Roman", serif; top: 38px; left: 44px; }
+  body.paper .hint { top: 38px; right: 44px; }
   #fade { position: fixed; inset: 0; pointer-events: none; opacity: 0; transition: opacity .35s ease; }
   body.day { --ink: #1f2547; --dim: #4b557e; --glass: rgba(255, 255, 255, 0.55); --edge: rgba(40, 60, 130, 0.22); }
   body.day button { background: rgba(255, 255, 255, 0.35); }
@@ -72,6 +92,11 @@
 <div id="label"></div>
 <div id="fade"></div>
 <pre id="err"></pre>
+<div id="sheet"></div>
+<label class="height" title="Raise or lower the castle (double-click to reset)">
+  <span>Height</span>
+  <input id="height" type="range" min="-100" max="100" value="0" step="1">
+</label>
 <div class="ui">
   <span class="actions">
     <button id="explode" class="primary" disabled>Explode</button>
@@ -83,6 +108,7 @@
     <button data-mode="day">Day</button>
     <button data-mode="stars">Stars</button>
     <button data-mode="magic">Magic</button>
+    <button data-mode="blueprint">Blueprint</button>
   </span>
 </div>
 
@@ -202,6 +228,7 @@ const DAY_MATS = {
   brick:   std(0xc4867b, 0.85),
   iron:    std(0x2c2c33, 0.4, 0.8),
   grass:   std(0x5f8b45, 1),
+  hedge:   std(0x3b6a32, 0.95),          // topiary trees: dark clipped foliage
   rock:    std(0xcac7c2, 0.95),
   lantern: std(0xf4e6b8, 0.3, 0.2, { emissive: 0xffd98a, emissiveIntensity: 0.25 }),
 };
@@ -213,12 +240,23 @@ const MAGIC_MATS = { ...DAY_MATS,
   glass:   std(0x2c4e88, 0.15, 0.3, { emissive: 0xffb860, emissiveIntensity: 0.9 }),
 };
 
+// Bronze / copper brown parts: the rotonde roof (not slate blue; the LEDs still light it in Magic)
+// and the entrance sign by the grotto
+const BRONZE = {
+  night: new THREE.MeshStandardMaterial({ color: 0x6a4a52, roughness: 0.45, metalness: 0.5, flatShading: true }),
+  day:   std(0x7b4a30, 0.4, 0.65),
+  magic: std(0x4a2b22, 0.35, 0.6),
+};
+const isBronze = p => (p.path === 'BATIMENTS/Rotonde/Batiment/Toiture' && p.name === 'Toit')
+  || (p.path === 'ROCHERS/Rochers/Entree bas' && p.name === 'Panneau entree');
+
 function dayKey(p) {
   const n = p.name.toLowerCase(), layer = p.path.split('/')[0];
+  if (/^feuillage/.test(n)) return 'hedge';
   if (p.mat === 'iron' || p.mat === 'lantern' || p.mat === 'grass') return p.mat;
   if (p.mat === 'rock' || /^rocher/.test(n)) return 'rock';
-  if (/faitage|drapeau|chouette|sphere|cloche|^pointe|jonction pointe/.test(n)) return 'gold';
-  if (/arbre|branche/.test(n)) return 'tree';
+  if (/faitage|drapeau|chouette|sphere|cloche|^pointe|jonction pointe|^ornement/.test(n)) return 'gold';
+  if (/arbre|branche|^tronc/.test(n)) return 'tree';
   if (/^muraille/.test(n)) return layer === 'BASE' ? 'base' : 'wall';
   if (/colombage|porte|pont levis|charpente|escalier bois|medaillon/.test(n)) return 'timber';
   if (/encadrement|garde corps/.test(n)) return 'trim';
@@ -250,6 +288,9 @@ const THEMES = {
     ground: 0x0a0820, bloom: [0.8, 0.55], stars: false, uplights: true, leds: true, fireworks: true,
     title: 'Magic Castle', fade: '#000005' },
 };
+THEMES.blueprint = { sky: paperTexture(), fog: 0xece5d1, fogDensity: 0, exposure: 1.0,
+  hemi: [0xffffff, 0xffffff, 1], key: [0xffffff, 1, 900, 1500, 700], rim: [0xffffff, 0],
+  ground: null, bloom: [0, 1], stars: false, paper: true, title: 'Castle Blueprint', fade: '#ece5d1' };
 let mode = 'day';   // the page always opens in daylight
 
 // ---------- Ground ----------
@@ -274,6 +315,7 @@ function applyTheme(m) {
   scene.fog.color.setHex(T.fog);
   scene.fog.density = T.fogDensity;
   renderer.toneMappingExposure = T.exposure;
+  renderer.toneMapping = T.paper ? THREE.NoToneMapping : THREE.ACESFilmicToneMapping;   // keep the paper's true colours
   hemi.color.setHex(T.hemi[0]); hemi.groundColor.setHex(T.hemi[1]); hemi.intensity = T.hemi[2];
   moon.color.setHex(T.key[0]); moon.intensity = T.key[1]; moon.position.set(T.key[2], T.key[3], T.key[4]);
   rim.color.setHex(T.rim[0]); rim.intensity = T.rim[1];
@@ -288,6 +330,7 @@ function applyTheme(m) {
   starUniforms.uSize.value = T.skySize ?? 1;
   setHover(null);
   if (m === 'stars' && parts.length && !castleStarsBuilt) buildCastleStars();
+  if (m === 'blueprint' && parts.length && !blueprintBuilt) buildBlueprint();
   for (const u of UPLIGHTS) u.light.intensity = T.uplights ? u.intensity : 0;
   fireworks.visible = !!T.fireworks;
   if (T.leds && parts.length && !roofLedsBuilt) buildRoofLeds();
@@ -295,9 +338,11 @@ function applyTheme(m) {
     p.mesh.material = m === 'stars' ? DEPTH_ONLY : p.mesh.userData[m];
     if (p.stars) p.stars.visible = m === 'stars';
     if (p.leds) p.leds.visible = !!T.leds;
+    if (p.lines) p.lines.visible = m === 'blueprint';
   }
   if (!T.floating) castle.position.y = castleBaseY;
-  document.body.classList.toggle('day', m === 'day');
+  document.body.classList.toggle('day', m === 'day' || !!T.paper);   // dark text on light backgrounds
+  document.body.classList.toggle('paper', !!T.paper);
   document.querySelector('h1').textContent = T.title;
   document.title = T.title;
   document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('active', b.dataset.mode === m));
@@ -320,16 +365,30 @@ document.querySelectorAll('[data-mode]').forEach(btn => btn.addEventListener('cl
 // mode the mesh itself only writes depth: it stays invisible but hides the stars
 // behind it, which keeps the silhouette readable.
 const DEPTH_ONLY = new THREE.MeshBasicMaterial({ colorWrite: false });
-const STAR_TINT = { gold: 0xffdca0, roof: 0xa8b8ff, glass: 0x9aaeff, grass: 0xa8e8d4, rock: 0xcfd0ee,
+const STAR_TINT = { hedge: 0x8fe0a8, gold: 0xffdca0, roof: 0xa8b8ff, glass: 0x9aaeff, grass: 0xa8e8d4, rock: 0xcfd0ee,
   tree: 0xd6c6ff, timber: 0xe6d4ff, lantern: 0xfff1c8, brick: 0xffc8d8, wall: 0xf1e8ff };
 const CASTLE_STAR_COUNT = innerWidth < 800 ? 85000 : 160000;   // density of the star castle
 const SURFACE_LIFT = 0.35;   // mm: keeps each star just in front of its surface
+const EDGE_SHARE = 0.4;      // part of the stars that trace the castle's sharp edges (brighter, steadier)
+const EDGE_ANGLE = 35;       // degrees: a fold sharper than this between two faces counts as an edge
+// Spires, finials, crests: small ornate pieces whose sharp edges would trace boxy
+// outlines. They get no edge stars; more and brighter surface stars instead.
+const ORNAMENT_SURFACE = 2, ORNAMENT_GLOW = 1.5;
+// Hand-tuned parts: count multiplies the number of stars, glow their brightness
+const STAR_FOCUS = [
+  { match: p => p.name === 'Rambarde pierre', count: 0.45, glow: 0.6 },   // long carved balustrade: too many edges
+  { match: p => p.path === 'DONJON/Toiture' || (p.path === 'DONJON/Corps partie superieure' && p.name === 'Corps superieur'),
+    count: 2.2, glow: 1.7 },                                              // top of the keep: spire, roof, upper body
+  { match: p => p.path === 'ROCHERS/Colline', count: 0.4, glow: 0.8 },   // the big hill: keep it in the background
+  { match: p => p.name.startsWith('Ornement'), count: 10, glow: 1.2 },   // gilded fleur-de-lys over the oval windows: tiny, needs more stars
+  { match: p => STAINED_GLASS.some(g => g.path === p.path && g.name === p.name), count: 30, glow: 1.3 },   // stained glass: small and flat, needs many stars to show its pattern and oval rim (not too bright, or the colours wash out to white)
+];
 const castleStarUniforms = { uTime: { value: 0 }, uPR: { value: renderer.getPixelRatio() },
   uScale: { value: 1300 }, uBright: { value: 1.95 } };   // uBright: overall star brightness
 const castleStarMat = new THREE.ShaderMaterial({
   uniforms: castleStarUniforms, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
   vertexShader: `
-    attribute float size; attribute float phase; attribute float spark; attribute vec3 color;
+    attribute float size; attribute float phase; attribute float spark; attribute float glow; attribute vec3 color;
     uniform float uTime, uPR, uScale; varying float vA; varying vec3 vC;
     void main() {
       vec4 mv = modelViewMatrix * vec4(position, 1.0);
@@ -343,6 +402,10 @@ const castleStarMat = new THREE.ShaderMaterial({
       float wave = sin(position.z * 0.018 + position.x * 0.011 - uTime * 0.32)
                  * sin(position.y * 0.014 - position.z * 0.007 + uTime * 0.21);
       vA *= 0.72 + 0.28 * wave;
+      // Outlines: edge stars carry a higher glow, and stars on surfaces seen edge-on
+      // (the castle's silhouette from the current viewpoint) shine more than faces seen head-on.
+      float rim = 1.0 - abs(dot(normalize(normalMatrix * normal), normalize(-mv.xyz)));
+      vA *= glow * mix(0.6, 1.5, rim * rim);
       vC = color;
       gl_PointSize = clamp(size * uPR * uScale / -mv.z, 1.0, 6.0 * uPR);
       gl_Position = projectionMatrix * mv;
@@ -372,7 +435,7 @@ function surfaceSampler(geo) {
   }
   return {
     area,
-    sample(out, j, lift = SURFACE_LIFT) {          // writes one point at out[j*3..j*3+2]
+    sample(out, j, lift = SURFACE_LIFT, nOut) {    // writes one point at out[j*3..j*3+2] (and its normal in nOut)
       const r = Math.random() * area;
       let lo = 0, hi = cum.length - 1;
       while (lo < hi) { const mid = (lo + hi) >> 1; if (cum[mid] < r) lo = mid + 1; else hi = mid; }
@@ -382,7 +445,8 @@ function surfaceSampler(geo) {
       const ux = P[i1] - P[i0], uy = P[i1 + 1] - P[i0 + 1], uz = P[i1 + 2] - P[i0 + 2];
       const vx = P[i2] - P[i0], vy = P[i2 + 1] - P[i0 + 1], vz = P[i2 + 2] - P[i0 + 2];
       let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-      const k = lift / (Math.hypot(nx, ny, nz) || 1);
+      const len = Math.hypot(nx, ny, nz) || 1, k = lift / len;
+      if (nOut) { nOut[j * 3] = nx / len; nOut[j * 3 + 1] = ny / len; nOut[j * 3 + 2] = nz / len; }
       out[j * 3]     = P[i0] + u * ux + v * vx + nx * k;
       out[j * 3 + 1] = P[i0 + 1] + u * uy + v * vy + ny * k;
       out[j * 3 + 2] = P[i0 + 2] + u * uz + v * vz + nz * k;
@@ -390,20 +454,81 @@ function surfaceSampler(geo) {
   };
 }
 
+// Random points along a part's sharp edges: folds between two faces sharper than
+// EDGE_ANGLE, and open borders. Each point is pushed off the surface along the
+// average of the two face normals, so it sits on the outside of the edge.
+function edgeSampler(geo) {
+  const P = geo.attributes.position.array, I = geo.index.array, nt = I.length / 3;
+  const fn = new Float32Array(nt * 3);
+  for (let t = 0; t < nt; t++) {
+    const i0 = I[t * 3] * 3, i1 = I[t * 3 + 1] * 3, i2 = I[t * 3 + 2] * 3;
+    const ux = P[i1] - P[i0], uy = P[i1 + 1] - P[i0 + 1], uz = P[i1 + 2] - P[i0 + 2];
+    const vx = P[i2] - P[i0], vy = P[i2 + 1] - P[i0 + 1], vz = P[i2 + 2] - P[i0 + 2];
+    const cx = uy * vz - uz * vy, cy = uz * vx - ux * vz, cz = ux * vy - uy * vx, l = Math.hypot(cx, cy, cz) || 1;
+    fn[t * 3] = cx / l; fn[t * 3 + 1] = cy / l; fn[t * 3 + 2] = cz / l;
+  }
+  const first = new Map(), cos = Math.cos(EDGE_ANGLE * Math.PI / 180), segs = [];
+  const add = (a, b, t1, t2) => {
+    let nx = fn[t1 * 3], ny = fn[t1 * 3 + 1], nz = fn[t1 * 3 + 2];
+    if (t2 >= 0) { nx += fn[t2 * 3]; ny += fn[t2 * 3 + 1]; nz += fn[t2 * 3 + 2]; }
+    const l = Math.hypot(nx, ny, nz) || 1;
+    segs.push(a, b, nx / l, ny / l, nz / l);
+  };
+  for (let t = 0; t < nt; t++) for (let e = 0; e < 3; e++) {
+    const a = I[t * 3 + e], b = I[t * 3 + (e + 1) % 3], key = a < b ? a * 65536 + b : b * 65536 + a;
+    const o = first.get(key);
+    if (o === undefined) { first.set(key, t); continue; }
+    first.set(key, -1);   // seen twice: done
+    if (o >= 0 && fn[o * 3] * fn[t * 3] + fn[o * 3 + 1] * fn[t * 3 + 1] + fn[o * 3 + 2] * fn[t * 3 + 2] < cos) add(a, b, o, t);
+  }
+  for (const [key, t] of first) if (t >= 0) add(Math.floor(key / 65536), key % 65536, t, -1);   // open borders
+  const ns = segs.length / 5, cum = new Float32Array(ns);
+  let length = 0;
+  for (let k = 0; k < ns; k++) {
+    const a = segs[k * 5] * 3, b = segs[k * 5 + 1] * 3;
+    length += Math.hypot(P[b] - P[a], P[b + 1] - P[a + 1], P[b + 2] - P[a + 2]);
+    cum[k] = length;
+  }
+  return {
+    length, segs, P,
+    sample(out, j, nOut, lift = SURFACE_LIFT * 1.5) {
+      const r = Math.random() * length;
+      let lo = 0, hi = ns - 1;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (cum[mid] < r) lo = mid + 1; else hi = mid; }
+      const a = segs[lo * 5] * 3, b = segs[lo * 5 + 1] * 3, f = Math.random();
+      for (let c = 0; c < 3; c++) {
+        const n = segs[lo * 5 + 2 + c];
+        out[j * 3 + c] = P[a + c] + (P[b + c] - P[a + c]) * f + n * lift;
+        nOut[j * 3 + c] = n;
+      }
+    },
+  };
+}
+
 function buildCastleStars() {
   castleStarsBuilt = true;
   const samplers = parts.map(p => surfaceSampler(p.mesh.geometry));
+  const edges = parts.map(p => edgeSampler(p.mesh.geometry));
   const totalArea = samplers.reduce((s, x) => s + x.area, 0);
+  const totalEdge = edges.reduce((s, x) => s + x.length, 0);
   const tint = new THREE.Color(), c = new THREE.Color();
 
   parts.forEach((p, k) => {
-    const n = Math.max(4, Math.round(CASTLE_STAR_COUNT * samplers[k].area / totalArea));
-    const pos = new Float32Array(n * 3), size = new Float32Array(n), phase = new Float32Array(n), spark = new Float32Array(n), col = new Float32Array(n * 3);
+    const focus = STAR_FOCUS.find(f => f.match(p.mesh.userData)) ?? { count: 1, glow: 1 };
+    const ornament = p.dayKey === 'gold';
+    const ns = Math.max(4, Math.round(CASTLE_STAR_COUNT * (1 - EDGE_SHARE) * samplers[k].area / totalArea * focus.count * (ornament ? ORNAMENT_SURFACE : 1)));
+    const ne = edges[k].length && !ornament ? Math.max(2, Math.round(CASTLE_STAR_COUNT * EDGE_SHARE * edges[k].length / totalEdge * focus.count)) : 0;
+    const n = ns + ne;
+    const pos = new Float32Array(n * 3), nrm = new Float32Array(n * 3), size = new Float32Array(n), phase = new Float32Array(n),
+      spark = new Float32Array(n), glow = new Float32Array(n), col = new Float32Array(n * 3);
     tint.setHex(STAR_TINT[p.dayKey] ?? STAR_TINT.wall);
     for (let j = 0; j < n; j++) {
-      samplers[k].sample(pos, j);
-      spark[j] = Math.pow(Math.random(), 3);                  // most stars quiet, a few restless
-      size[j] = 0.9 + spark[j] * 1.4 + Math.pow(Math.random(), 8) * 2.4;
+      const onEdge = j >= ns;
+      if (onEdge) edges[k].sample(pos, j, nrm); else samplers[k].sample(pos, j, SURFACE_LIFT, nrm);
+      if (Math.abs(nrm[j * 3]) + Math.abs(nrm[j * 3 + 1]) + Math.abs(nrm[j * 3 + 2]) < 0.5) nrm[j * 3 + 2] = 1;   // degenerate face
+      spark[j] = Math.pow(Math.random(), onEdge ? 5 : 3);     // most stars quiet, a few restless; edges steadier
+      size[j] = (onEdge ? 1.25 : 0.9) + spark[j] * 1.4 + Math.pow(Math.random(), 8) * 2.4;
+      glow[j] = (onEdge ? 1.6 : 0.8) * focus.glow * (ornament ? ORNAMENT_GLOW : 1);
       phase[j] = Math.random() * 100;
       c.copy(tint).offsetHSL((Math.random() - 0.5) * 0.04, 0, (Math.random() - 0.5) * 0.12);
       c.toArray(col, j * 3);
@@ -413,6 +538,8 @@ function buildCastleStars() {
     geo.setAttribute('size', new THREE.BufferAttribute(size, 1));
     geo.setAttribute('phase', new THREE.BufferAttribute(phase, 1));
     geo.setAttribute('spark', new THREE.BufferAttribute(spark, 1));
+    geo.setAttribute('glow', new THREE.BufferAttribute(glow, 1));
+    geo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
     geo.boundingSphere = p.mesh.geometry.boundingSphere;
     const pts = new THREE.Points(geo, castleStarMat);
@@ -641,12 +768,13 @@ async function loadCastle() {
     geo.setIndex(new THREE.BufferAttribute(idx.slice(i0, i0 + iN), 1));
     geo.computeBoundingSphere();
     geo.computeBoundingBox();
-    all.union(geo.boundingBox);
+    if (!p.path.startsWith('ROCHERS/Colline')) all.union(geo.boundingBox);   // frame the castle, not the scenery around it
 
-    const key = dayKey(p), night = MATS[p.mat] ?? MATS.stone, day = DAY_MATS[key];
+    const key = dayKey(p), bronze = isBronze(p);
+    const night = bronze ? BRONZE.night : MATS[p.mat] ?? MATS.stone, day = bronze ? BRONZE.day : DAY_MATS[key];
     const mesh = new THREE.Mesh(geo, mode === 'day' ? day : night);
     mesh.castShadow = mesh.receiveShadow = p.mat !== 'lantern';
-    mesh.userData = { name: p.name, path: p.path, night, day, magic: MAGIC_MATS[key] };
+    mesh.userData = { name: p.name, path: p.path, night, day, magic: bronze ? (key === 'roof' ? BRONZE.magic : BRONZE.day) : MAGIC_MATS[key] };
     castle.add(mesh);
     parts.push({ mesh, layerName: p.path.split('/')[0], key: subKey(p.path), dayKey: key });
   }
@@ -733,6 +861,7 @@ async function applyStainedGlass() {
       ud.day = day; ud.night = night; ud.magic = night;
       if (mode !== 'stars') part.mesh.material = ud[mode];
       ud.glass = { pixels: ctx.getImageData(0, 0, GLASS_TEX_W, GLASS_TEX_H).data, uvOf };
+      if (blueprintBuilt) { ud.blueprint = blueprintGlassMat(tex); if (mode === 'blueprint') part.mesh.material = ud.blueprint; }
       if (part.stars) colorStarsFromGlass(part);
     } catch (e) {
       showError(e);
@@ -937,6 +1066,149 @@ function applyInterior() {
   }
 }
 
+// ---------- Blueprint: a pencil drawing on old paper ----------
+// The castle is filled with the paper colour, its sharp edges drawn as graphite
+// lines, with pencil hatching on the faces turned away from the light and
+// darker strokes where a surface turns away from the eye (the contours).
+const PAPER = new THREE.Color('#ece5d1'), INK = new THREE.Color('#34333d'), BLUE_PENCIL = new THREE.Color('#3d5fa8');
+function paperTexture() {
+  const W = 1024, H = 1024, c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d'), rnd = mulberry(1987);
+  ctx.fillStyle = '#ece5d1'; ctx.fillRect(0, 0, W, H);
+  for (let i = 0; i < 260; i++) {   // soft mottling
+    const x = rnd() * W, y = rnd() * H, r = 30 + rnd() * 120;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    const a = 0.025 + rnd() * 0.03, dark = rnd() < 0.5;
+    g.addColorStop(0, dark ? `rgba(150,130,95,${a})` : `rgba(255,252,240,${a})`); g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g; ctx.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+  ctx.lineWidth = 0.6;
+  for (let i = 0; i < 900; i++) {   // paper fibres
+    const x = rnd() * W, y = rnd() * H, a = rnd() * Math.PI, l = 4 + rnd() * 14;
+    ctx.strokeStyle = `rgba(120,105,80,${0.05 + rnd() * 0.08})`;
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.quadraticCurveTo(x + Math.cos(a) * l * 0.5 + rnd() * 3, y + Math.sin(a) * l * 0.5 + rnd() * 3, x + Math.cos(a) * l, y + Math.sin(a) * l); ctx.stroke();
+  }
+  const v = ctx.createRadialGradient(W / 2, H / 2, W * 0.35, W / 2, H / 2, W * 0.75);   // aged edges
+  v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(120,95,55,0.18)');
+  ctx.fillStyle = v; ctx.fillRect(0, 0, W, H);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+const blueprintUniforms = {
+  uPaper: { value: PAPER }, uInk: { value: INK }, uBlue: { value: BLUE_PENCIL },
+  uLight: { value: new THREE.Vector3(-0.45, 0.8, 0.4).normalize() }, uPR: { value: renderer.getPixelRatio() }, uHi: { value: 0 },
+};
+const blueprintMat = new THREE.ShaderMaterial({
+  uniforms: blueprintUniforms,
+  polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,   // keeps the edge lines in front of the fill
+  vertexShader: `
+    varying vec3 vView, vLocal; varying vec2 vUv;
+    void main() {
+      vec4 mv = modelViewMatrix * vec4(position, 1.0);
+      vView = mv.xyz;
+      vLocal = position;
+      #ifdef GLASS
+        vUv = uv;
+      #endif
+      gl_Position = projectionMatrix * mv;
+    }`,
+  fragmentShader: `
+    uniform vec3 uPaper, uInk, uBlue, uLight; uniform float uPR, uHi;
+    varying vec3 vView, vLocal; varying vec2 vUv;
+    #ifdef GLASS
+      uniform sampler2D tGlass;
+    #endif
+    // thin anti-aliased line at every integer value of c
+    float gridLine(float c, float w) {
+      float f = abs(fract(c + 0.5) - 0.5);
+      return 1.0 - smoothstep(w, w + fwidth(c) * 1.2, f);
+    }
+    float hatch(float c, float spacing, float w) {
+      float d = abs(fract(c / spacing) - 0.5) * spacing;
+      return 1.0 - smoothstep(w * 0.5, w * 0.5 + 0.8, d);
+    }
+    void main() {
+      vec3 n = normalize(cross(dFdx(vView), dFdy(vView)));        // face normal (view space)
+      vec3 L = normalize((viewMatrix * vec4(uLight, 0.0)).xyz);
+      float lit = dot(n, L) * 0.5 + 0.5;
+      float facing = abs(dot(n, normalize(-vView)));
+      vec2 p = gl_FragCoord.xy / uPR;                               // CSS pixels: same stroke width on every screen
+      float h1 = (1.0 - smoothstep(0.42, 0.62, lit)) * hatch(p.x + p.y, 5.0, 0.9);
+      float h2 = (1.0 - smoothstep(0.18, 0.34, lit)) * hatch(p.x - p.y, 5.0, 0.9);
+      float contour = smoothstep(0.3, 0.05, facing);
+      float tone = max(max(h1, h2) * 0.45, contour * 0.7);
+      #ifdef ROOF
+        // Roof tiles drawn one by one: rows along the height, staggered joints, plus
+        // a light hatching all over, so the roofs read darker like on the original plan.
+        float row = vLocal.z / 2.4;
+        float col = (vLocal.x * 0.8 + vLocal.y * 0.6) / 2.6 + floor(row) * 0.5;
+        float tiles = max(gridLine(row, 0.06), gridLine(col, 0.05) * step(0.12, fract(row)));
+        tiles *= 1.0 - smoothstep(0.25, 0.6, fwidth(row));            // far away: tiles merge into a grey tone
+        float base = hatch(p.x + p.y, 4.0, 0.9) * (1.0 - smoothstep(0.75, 0.95, lit));
+        tone = max(tone, max(tiles * 0.6, base * 0.4) + smoothstep(0.25, 0.6, fwidth(row)) * 0.25);
+      #endif
+      #ifdef GLASS
+        // Stained glass: its pattern redrawn in pencil (darker where the glass is darker)
+        vec3 g = texture2D(tGlass, vUv).rgb;
+        float lum = dot(g, vec3(0.299, 0.587, 0.114));
+        tone = max(tone, (1.0 - smoothstep(0.02, 0.6, lum)) * 0.75);
+      #endif
+      float grain = fract(sin(dot(floor(gl_FragCoord.xy), vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
+      vec3 paper = uPaper * (1.0 + grain * 0.03) * mix(vec3(1.0), vec3(0.9, 0.95, 1.08), uHi * 0.5);
+      gl_FragColor = vec4(mix(paper, mix(uInk, uBlue, uHi), tone), 1.0);
+    }`,
+});
+const blueprintLineMat = new THREE.LineBasicMaterial({ color: INK, transparent: true, opacity: 0.75, depthWrite: false });
+let blueprintBuilt = false;
+const blueprintRoofMat = blueprintMat.clone();
+blueprintRoofMat.uniforms = { ...blueprintUniforms, uHi: { value: 0 } };
+blueprintRoofMat.defines = { ROOF: '' };
+function blueprintGlassMat(tex) {
+  const m = blueprintMat.clone();
+  m.uniforms = { ...blueprintUniforms, uHi: { value: 0 }, tGlass: { value: tex } };
+  m.defines = { GLASS: '' };
+  return m;
+}
+
+function buildBlueprint() {
+  blueprintBuilt = true;
+  for (const p of parts) {
+    const ud = p.mesh.userData;
+    ud.blueprint = ud.glass ? blueprintGlassMat(ud.day.map) : p.dayKey === 'roof' ? blueprintRoofMat : blueprintMat;
+    const { segs, P } = edgeSampler(p.mesh.geometry);
+    const n = segs.length / 5, pos = new Float32Array(n * 6);
+    for (let k = 0; k < n; k++) {
+      const a = segs[k * 5] * 3, b = segs[k * 5 + 1] * 3;
+      pos.set([P[a], P[a + 1], P[a + 2], P[b], P[b + 1], P[b + 2]], k * 6);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.boundingSphere = p.mesh.geometry.boundingSphere;
+    const lines = new THREE.LineSegments(geo, blueprintLineMat);
+    lines.raycast = () => {};
+    lines.visible = false;
+    p.mesh.add(lines);
+    p.lines = lines;
+  }
+}
+
+// The drawing sheet's frame with its grid references, like the original plan
+function buildSheet() {
+  const sheet = document.getElementById('sheet');
+  const cols = 'ABCDEFGH', rows = 10;
+  for (let i = 0; i < cols.length; i++) for (const side of ['top', 'bottom'])
+    sheet.insertAdjacentHTML('beforeend', `<span class="ref ${side}" style="left:${(i + 0.5) / cols.length * 100}%">${cols[i]}</span>`);
+  for (let i = 0; i < rows; i++) for (const side of ['left', 'right'])
+    sheet.insertAdjacentHTML('beforeend', `<span class="ref ${side}" style="top:${(i + 0.5) / rows * 100}%">${rows - i}</span>`);
+  for (let i = 1; i < cols.length; i++) for (const side of ['top', 'bottom'])
+    sheet.insertAdjacentHTML('beforeend', `<i class="tick ${side}" style="left:${i / cols.length * 100}%"></i>`);
+  for (let i = 1; i < rows; i++) for (const side of ['left', 'right'])
+    sheet.insertAdjacentHTML('beforeend', `<i class="tick ${side}" style="top:${i / rows * 100}%"></i>`);
+}
+buildSheet();
+
 function subKey(path) { return path.split('/').slice(0, 2).join('/'); }
 
 async function fetchWithProgress(url) {
@@ -992,6 +1264,18 @@ spinBtn.addEventListener('click', () => {
   spinBtn.classList.toggle('primary', controls.autoRotate);
 });
 
+// ---------- Height slider: slides the view down/up so the castle rises/sinks on screen ----------
+const heightInput = document.getElementById('height');
+let heightShift = 0;
+function setHeight(v) {
+  const next = -v / 100 * castleHeight * 0.6;   // raising the castle = moving the view down
+  camera.position.y += next - heightShift;
+  controls.target.y += next - heightShift;
+  heightShift = next;
+}
+heightInput.addEventListener('input', () => setHeight(+heightInput.value));
+heightInput.addEventListener('dblclick', () => { heightInput.value = 0; setHeight(0); });
+
 // ---------- Hover labels ----------
 const label = document.getElementById('label');
 const labelsBtn = document.getElementById('labels');
@@ -1036,6 +1320,7 @@ function setHover(obj) {
     m.onBeforeCompile = obj.userData.baseMat.onBeforeCompile;   // keep textured interiors
     m.customProgramCacheKey = obj.userData.baseMat.customProgramCacheKey;
     if (m.emissive) { m.emissive = highlight; m.emissiveIntensity = 0.35; }   // lit materials only
+    if (m.uniforms?.uHi) m.uniforms.uHi.value = 1;                              // blueprint: blue pencil
     obj.material = m;
     const pts = obj.userData.starPoints;
     if (mode === 'stars' && pts) {

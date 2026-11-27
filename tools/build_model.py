@@ -14,13 +14,15 @@ import argparse, gzip, json, os, re, struct, sys
 import numpy as np
 import fast_simplification
 
+import landscape   # procedural hill and topiary trees (tools/landscape.py)
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASSETS = os.path.join(ROOT, "Assets")
 OUT = os.path.join(ROOT, "models", "castle.bin.gz")
 
 # Parts left out of the web model (matched on the lowercase path relative to Assets/)
 EXCLUDE = [
-    r"deco oeil de boeuf",   # floats in mid-air, not attached to the castle
+    r"deco oeil de boeuf",   # print plate of 3 ornaments: placed by ORNAMENTS below instead
     r"support impression",   # 3D-printing supports, not part of the castle
     r"faitage tour g",       # misplaced in the STL; no roof in the kit has a matching ridge
 ]
@@ -38,12 +40,27 @@ PLACEMENT = {
     ),
 }
 
+# "Deco oeil de boeuf" is a print plate: three identical gilded ornaments (a fleur-de-lys
+# between two scrolls) held in a support frame. Each copy sits above one oval stained-glass
+# window, on the roof just over the window frame, leaning back with the roof.
+ORNAMENT_SRC = "BATIMENTS/Accessoires/Deco oeil de boeuf.stl"
+ORNAMENT_FRAME_X = -110.85          # the support frame lies behind this plane (the ornaments' relief is in front)
+ORNAMENT_ANCHOR = (-110.44, 119.7, 331.95)   # copy 0: back face, centre, bottom of the central bead
+ORNAMENT_STEP_Z = 20.0              # the copies are stacked 20 mm apart on the plate
+ORNAMENTS = [  # folder, name, anchor in the castle (x, y, z), lean back (deg), scale, faces +x
+    # Tour G: stands on the arched hood over the window (its scrolls follow the arch), leaning towards the roof
+    ("BATIMENTS/Tour G/Corps batiment", "Ornement vitrail", (-171.0, 0.0, 131.2), 32.0, 1.0, False),
+    # Keep: smaller windows, so smaller ornaments, lying on the spire's slope just above each window frame
+    ("DONJON/Corps partie superieure", "Ornement vitrail gauche", (-63.0, -18.0, 477.7), 17.7, 0.7, False),
+    ("DONJON/Corps partie superieure", "Ornement vitrail droit", (-17.7, -18.0, 477.7), 17.7, 0.7, True),
+]
+
 MATERIAL_RULES = [  # first match wins, tested on the lowercase file name (folder path only where noted)
     ("lantern", r"lanterne"),
     ("flag",    r"drapeau"),
     ("iron",    r"rambarde fer|grille|herse|chaine"),
-    ("timber",  r"colombage|porte|pont levis|charpente|volet"),
-    ("grass",   r"herbe|base du jardinet"),
+    ("timber",  r"colombage|porte|pont levis|charpente|volet|tronc"),
+    ("grass",   r"herbe|base du jardinet|feuillage"),
     ("rock",    r"^rochers/"),                   # matched on the folder path
     ("roof",    r"toit|faitage|flèche|fleche|chapeau|coupole"),
     ("stone",   r""),
@@ -72,6 +89,42 @@ def weld(tri_verts, eps=1e-3):
     faces = inv.reshape(-1, 3)
     good = (faces[:, 0] != faces[:, 1]) & (faces[:, 1] != faces[:, 2]) & (faces[:, 0] != faces[:, 2])
     return verts, faces[good]
+
+
+def ornament_copies():
+    """Split the ornament plate into its three copies, without the support frame."""
+    raw = load_stl(os.path.join(ASSETS, ORNAMENT_SRC)).reshape(-1, 3, 3)
+    tris = raw[~(raw[:, :, 0] >= ORNAMENT_FRAME_X).all(1)]
+    # connected pieces (scrolls, fleur-de-lys, bead), each assigned to a copy by its lowest point
+    v, f = weld(tris.reshape(-1, 3))
+    parent = np.arange(len(v))
+    def root(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+    for a, b, c in f:
+        ra, rb, rc = root(a), root(b), root(c)
+        parent[rb] = ra
+        parent[root(rc)] = ra
+    piece = np.array([root(i) for i in range(len(v))])
+    low = {r: v[piece == r, 2].min() for r in np.unique(piece[f[:, 0]])}
+    copy_of = np.array([int((low[piece[a]] - (ORNAMENT_ANCHOR[2] - 9.0)) // ORNAMENT_STEP_Z) for a in f[:, 0]])
+    return [v[f[copy_of == k]] for k in range(3)]
+
+
+def placed_ornaments():
+    out, copies = [], ornament_copies()
+    for k, (folder, name, at, lean, scale, flip) in enumerate(ORNAMENTS):
+        tri = copies[k].reshape(-1, 3)
+        anchor = np.array(ORNAMENT_ANCHOR) + [0, 0, ORNAMENT_STEP_Z * k]
+        a = np.radians(lean)
+        ry = np.array([[np.cos(a), 0, -np.sin(a)], [0, 1, 0], [np.sin(a), 0, np.cos(a)]])   # row vectors: top leans to +x
+        v = np.einsum("ij,jk->ik", (tri - anchor) * scale, ry)
+        if flip:
+            v[:, :2] *= -1                                                                 # turn 180° to face +x
+        out.append((os.path.join(folder, name + ".stl"), v + np.array(at)))
+    return out
 
 
 def material_for(rel):
@@ -103,6 +156,15 @@ def main():
         meshes.append([rel, v, f])
         print(f"\rload {i+1}/{len(files)}", end="", file=sys.stderr)
     print(file=sys.stderr)
+    for rel, raw in placed_ornaments():
+        v, f = weld(raw)
+        meshes.append([rel, v, f])
+    # Scenery: the hill on the left, and topiary trees on it and on top of the rocks
+    rock_grass = np.concatenate([v[f] for rel, v, f in meshes
+                                 if rel.replace(os.sep, "/").startswith("ROCHERS/") and "herbe" in rel.lower()])
+    for rel, tris in landscape.hill() + landscape.trees(rock_grass):
+        v, f = weld(tris.reshape(-1, 3))
+        meshes.append([rel, v, f])
 
     # Keep small parts intact; scale the rest by one shared ratio to meet the budget.
     sizes = np.array([len(m[2]) for m in meshes])
