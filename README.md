@@ -1,12 +1,12 @@
 # Magic Castle
 
-An interactive 3D castle (Three.js) with an **Explode** button that lifts the castle apart layer by layer, and several looks: **Normal** (the castle in daylight), **Closed** (the castle at night, with no show), **Stars** (the castle drawn as glowing stars, floating in the void), **Magic** (coloured floodlights, LED-studded roofs and fireworks), **Blueprint**, **Shine**, **Electro** and **Xmas**.
+An interactive 3D castle (Three.js) with an **Explode** button that lifts the castle apart layer by layer, and several looks: **Normal**, **Stars** (the castle drawn as glowing stars, floating in the void), **Magic** (coloured floodlights, LED-studded roofs and fireworks), **Blueprint**, **Shine**, **Electro** and **Xmas**.
 
 Every mode also has a **☀️ Day / 🌙 Night** button with two versions of the mode:
 
 | Mode | Day | Night |
 |---|---|---|
-| Normal / Closed | daylight | night (Normal opens by day, Closed by night) |
+| Normal | daylight | night, no show |
 | Stars | normal castle with twinkling stars on its edges | castle of stars in the void |
 | Magic | golden hour, roof LEDs on | floodlights, LEDs and fireworks |
 | Blueprint | pencil on cream paper | cyanotype (white on Prussian blue) |
