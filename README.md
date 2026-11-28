@@ -1,6 +1,6 @@
 # Magic Castle
 
-An interactive 3D castle (Three.js) with an **Explode** button that lifts the castle apart layer by layer, and four looks: **Day**, **Night**, **Stars** (the castle drawn as glowing stars, floating in the void) and **Magic** (coloured floodlights, LED-studded roofs and fireworks).
+An interactive 3D castle (Three.js) with an **Explode** button that lifts the castle apart layer by layer, and several looks: **Normal** (the castle in daylight), **Closed** (the castle at night, with no show), **Stars** (the castle drawn as glowing stars, floating in the void), **Magic** (coloured floodlights, LED-studded roofs and fireworks), **Blueprint**, **Shine**, **Electro** and **Xmas**.
 
 - `index.html`: the whole page (Three.js is loaded from a CDN)
 - `models/castle.bin.gz`: all 629 castle parts, simplified and compressed (~7 MB)
