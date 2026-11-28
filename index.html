@@ -1708,11 +1708,44 @@ talesGroup.add(drones);
 const circle = (cx, cy, rx, ry = rx, a0 = 0, a1 = Math.PI * 2, n = 40) =>
   Array.from({ length: n + 1 }, (_, i) => { const a = a0 + (a1 - a0) * i / n; return [cx + Math.cos(a) * rx, cy + Math.sin(a) * ry]; });
 const mirror = pts => pts.map(([x, y]) => [-x, y]);
+// Flip the train to face right, bend it along an arc (track curving like a bridge over the
+// castle) and tilt it so it climbs: a sense of movement instead of a flat side view.
+function trainPose(strokes) {
+  const R = 2.6, track = 0.11, tilt = 0.4;
+  const pose = ([x, y]) => {
+    x = -x;                                            // face right
+    const a = x / R, r = R + (y - track);
+    let X = r * Math.sin(a), Y = track + r * Math.cos(a) - R;
+    const c = Math.cos(tilt), sn = Math.sin(tilt);     // climb towards the right
+    return [X * c - (Y - 0.5) * sn + 0.05, X * sn + (Y - 0.5) * c + 0.55];
+  };
+  const fine = pts => pts.flatMap((p, i) => i === 0 ? [p] :   // cut straight strokes so they bend too
+    Array.from({ length: 12 }, (_, k) => [pts[i - 1][0] + (p[0] - pts[i - 1][0]) * (k + 1) / 12, pts[i - 1][1] + (p[1] - pts[i - 1][1]) * (k + 1) / 12]));
+  return strokes.map(([color, pts]) => [color, fine(pts).map(pose)]);
+}
+// round off a polyline (Chaikin corner cutting), for soft, hand-drawn curves
+function smooth(pts, passes = 3) {
+  for (let k = 0; k < passes; k++)
+    pts = [pts[0], ...pts.slice(0, -1).flatMap((p, i) => { const q = pts[i + 1];
+      return [[p[0] * 0.75 + q[0] * 0.25, p[1] * 0.75 + q[1] * 0.25], [p[0] * 0.25 + q[0] * 0.75, p[1] * 0.25 + q[1] * 0.75]]; }), pts[pts.length - 1]];
+  return pts;
+}
+const spiral = (cx, cy, r0, r1, turns, dir = 1, n = 50) => Array.from({ length: n + 1 }, (_, i) => {
+  const t = i / n, a = dir * t * turns * Math.PI * 2, r = r0 + (r1 - r0) * t;
+  return [cx + Math.cos(a) * r, cy + Math.sin(a) * r];
+});
+
 const heart = (cx, cy, r, n = 60) => Array.from({ length: n + 1 }, (_, i) => {   // classic heart curve
   const t = i / n * Math.PI * 2;
   return [cx + r * 16 * Math.sin(t) ** 3 / 16, cy + r * (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)) / 16];
 });
 const DRONE_FIGURES = [
+  // a rainbow arc over the whole castle, from the ground on the left to the ground on the right,
+  // like a storybook logo: red on the left round to violet on the right (ground level: y -1.58)
+  { name: 'rainbow arc', strokes: Array.from({ length: 60 }, (_, k) => {
+    const a0 = (180 - k * 3) * Math.PI / 180, a1 = (180 - (k + 1) * 3) * Math.PI / 180;
+    return [new THREE.Color().setHSL(k / 60 * 0.8, 1, 0.6).getHex(), circle(0, -1.58, 2.0, 2.15, a0, a1, 4)];
+  }) },
   // laid out around the castle: the middle of the frame (|x| < 0.8) is where the castle stands
   { name: 'hearts', strokes: [
     [0xff4f9a, heart(-1.55, 0.35, 0.5)], [0xff9ad0, heart(-1.55, 0.4, 0.3)],      // big heart on the left
@@ -1721,12 +1754,65 @@ const DRONE_FIGURES = [
     [0xff9ad0, heart(-2.05, -0.45, 0.13)], [0xff3d6a, heart(2.05, -0.3, 0.15)],
     [0xc070ff, heart(-1.0, -0.6, 0.12)], [0xff4f9a, heart(1.05, -0.5, 0.11)],
   ] },
-  { name: 'shooting star', strokes: [
-    [0xffe14d, Array.from({ length: 11 }, (_, i) => { const r = i % 2 ? 0.17 : 0.42, a = Math.PI / 2 + i * Math.PI / 5; return [1.6 + Math.cos(a) * r, 0.95 + Math.sin(a) * r]; })],
-    [0xff5fd0, circle(1.6, -1.6, 3.1, 2.5, Math.PI * 0.52, Math.PI * 0.86)],   // trails arching over the castle
-    [0x45e0ff, circle(1.6, -1.75, 3.1, 2.5, Math.PI * 0.53, Math.PI * 0.88)],
-    [0xb06bff, circle(1.6, -1.9, 3.1, 2.5, Math.PI * 0.54, Math.PI * 0.9)],
-    ...[[-1.9, 0.2], [-1.3, -0.5], [-2.2, -0.9], [1.2, -0.4], [2.1, 0.1]].map(([x, y]) => [0xffffff, [[x - 0.07, y], [x + 0.07, y], [x, y], [x, y + 0.07], [x, y - 0.07]]]),
+  // a pumpkin coach floating beside the keep (frame: x right, y up; the spire tip is at about (0, 0.4))
+  { name: 'pumpkin coach', strokes: [
+    [0xff5a1f, circle(-0.5, 0.13, 0.46, 0.37)],                                    // round pumpkin body
+    [0xff8a2f, circle(-0.5, 0.13, 0.3, 0.36, Math.PI * 0.5, Math.PI * 1.5)],       // ribs
+    [0xff8a2f, circle(-0.5, 0.13, 0.3, 0.36, -Math.PI * 0.5, Math.PI * 0.5)],
+    [0xff8a2f, circle(-0.5, 0.13, 0.13, 0.36, Math.PI * 0.5, Math.PI * 1.5)],
+    [0xff8a2f, circle(-0.5, 0.13, 0.13, 0.36, -Math.PI * 0.5, Math.PI * 0.5)],
+    [0xffd060, circle(-0.5, 0.12, 0.12, 0.16)],                                    // window
+    [0xffe07a, [[-0.5, 0.5], [-0.5, 0.6]]],                                        // stem and curly crown on top
+    [0xffe07a, spiral(-0.6, 0.66, 0.02, 0.1, 1.2, -1)], [0xffe07a, spiral(-0.4, 0.66, 0.02, 0.1, 1.2, 1)],
+    [0xffe07a, circle(-0.5, 0.79, 0.05)],
+    [0xffb03d, spiral(-0.97, 0.22, 0.02, 0.09, 1.1, 1)], [0xffb03d, spiral(-0.03, 0.22, 0.02, 0.09, 1.1, -1)],   // side curls
+    [0xff5a1f, circle(-0.5, -0.27, 0.32, 0.05, Math.PI, Math.PI * 2)],             // base
+    [0x3dff6a, circle(-1.0, -0.42, 0.27)], [0x3dff6a, spiral(-1.0, -0.42, 0.02, 0.16, 2.0, 1)],   // big wheels with spiral spokes
+    [0x3dff6a, circle(0.02, -0.4, 0.26)], [0x3dff6a, spiral(0.02, -0.4, 0.02, 0.15, 2.0, -1)],   // right wheel, under the coach like the left one
+    [0x3dff6a, spiral(-1.25, 0.05, 0.02, 0.13, 1.4, 1)],                           // vine curls
+    [0x3dff6a, spiral(0.12, 0.32, 0.02, 0.12, 1.4, -1)],
+    [0x3dff6a, circle(0.38, -0.6, 0.08)],
+  ] },
+  // a steam locomotive above the castle, heading right on a curving, climbing track (drawn heading
+  // left, then flipped and bent by trainPose); no character in its big wheel: spokes instead
+  { name: 'steam train', strokes: trainPose([
+    [0xff3d3d, [[-0.85, 0.42], [0.05, 0.42], [0.05, 0.72], [-0.85, 0.72]]],                  // boiler
+    [0xff3d3d, circle(-0.85, 0.57, 0.06, 0.15, Math.PI * 0.5, Math.PI * 1.5)],               // its rounded front
+    ...[-0.6, -0.35, -0.1].map(x => [0xffd23d, [[x, 0.42], [x, 0.72]]]),                      // bands
+    [0xff8a2f, [[-0.76, 0.72], [-0.84, 1.0], [-0.56, 1.0], [-0.64, 0.72]]],                    // funnel smokestack
+    [0xff8a2f, circle(-0.35, 0.72, 0.08, 0.08, 0, Math.PI)],                                  // steam dome
+    [0xffd23d, circle(-0.13, 0.72, 0.05, 0.05, 0, Math.PI)],                                  // sand dome
+    [0xffe14d, [[-0.97, 0.76], [-0.85, 0.76], [-0.85, 0.88], [-0.97, 0.88], [-0.97, 0.76]]],   // headlamp
+    [0x3d8bff, [[0.05, 0.42], [0.47, 0.42], [0.47, 0.98], [0.05, 0.98], [0.05, 0.42]]],        // cab
+    [0xffd23d, [[-0.02, 1.03], [0.54, 1.03]]],                                                // cab roof
+    [0xffe14d, [[0.15, 0.72], [0.37, 0.72], [0.37, 0.9], [0.15, 0.9], [0.15, 0.72]]],          // cab window
+    [0xffa83d, [[-0.98, 0.38], [0.6, 0.38]]],                                                 // frame
+    [0xffd23d, [[-0.92, 0.38], [-1.12, 0.12], [-0.82, 0.12], [-0.92, 0.38]]],                  // cowcatcher
+    [0xffd23d, [[-1.02, 0.12], [-0.92, 0.38], [-0.92, 0.12]]],
+    [0xff8a2f, circle(-0.68, 0.25, 0.11)], [0xff8a2f, circle(-0.42, 0.25, 0.11)],              // small front wheels
+    [0xffa83d, circle(0.62, 0.38, 0.32)], [0xffe14d, circle(0.62, 0.38, 0.06)],                // big driving wheel and hub
+    ...Array.from({ length: 8 }, (_, k) => { const a = k * Math.PI / 4; return [0x3d8bff, [[0.62 + Math.cos(a) * 0.08, 0.38 + Math.sin(a) * 0.08], [0.62 + Math.cos(a) * 0.28, 0.38 + Math.sin(a) * 0.28]]]; }),
+    [0xff3d3d, [[-0.42, 0.25], [0.5, 0.3]]],                                                  // connecting rod
+    [0xd8d8ff, circle(-0.66, 1.12, 0.07)], [0xd8d8ff, circle(-0.52, 1.27, 0.1)],               // puffs of steam
+    [0xd8d8ff, circle(-0.3, 1.38, 0.13)], [0xd8d8ff, circle(-0.02, 1.43, 0.15)],
+    [0xffa83d, [[-1.3, 0.11], [1.6, 0.11]]],                                                  // track, trailing behind
+  ]) },
+  // a big swan on the right and a little duck on the left, in pale blue with orange beaks
+  { name: 'swan and duck', share: 0.42, strokes: [   // fewer drones: their dots stay visible
+    // swan: S-shaped neck, round head, boat-shaped body rising to a pointed tail, folded wing
+    [0xcfe6ff, smooth([[0.41, 0.13], [0.37, 0.23], [0.42, 0.33], [0.53, 0.33], [0.62, 0.2], [0.6, 0.02], [0.52, -0.18], [0.5, -0.36], [0.6, -0.5],
+      [0.9, -0.57], [1.2, -0.54], [1.42, -0.36], [1.5, -0.1], [1.48, 0.12]])],
+    [0xcfe6ff, smooth([[0.41, 0.13], [0.47, 0.05], [0.47, -0.1], [0.4, -0.25], [0.42, -0.42], [0.55, -0.56], [0.65, -0.6]])],
+    [0xa8d4ff, smooth([[1.48, 0.12], [1.38, -0.02], [1.15, 0.05], [0.9, -0.05], [0.68, -0.25]])],         // wing, top
+    [0xa8d4ff, smooth([[1.42, -0.06], [1.2, -0.2], [0.95, -0.22], [0.72, -0.34]])],                       // wing, inside
+    [0xff5a3d, [[0.37, 0.2], [0.27, 0.14], [0.38, 0.12]]],                                                 // beak
+    [0x3d5aff, circle(0.47, 0.25, 0.02)],                                                                  // eye
+    // duck: round head, short neck, plump body with an upturned tail and a wing
+    [0xcfe6ff, circle(-0.38, -0.08, 0.1, 0.09)],
+    [0xcfe6ff, smooth([[-0.42, -0.17], [-0.47, -0.25], [-0.6, -0.3], [-0.78, -0.27], [-0.9, -0.15], [-0.86, -0.32], [-0.78, -0.48], [-0.6, -0.55], [-0.43, -0.5], [-0.33, -0.38], [-0.32, -0.25], [-0.35, -0.16]])],
+    [0xa8d4ff, smooth([[-0.78, -0.36], [-0.62, -0.33], [-0.48, -0.38]])], [0xa8d4ff, smooth([[-0.75, -0.43], [-0.6, -0.42], [-0.5, -0.46]])],
+    [0xff5a3d, [[-0.29, -0.06], [-0.18, -0.1], [-0.29, -0.13]]],
+    [0x3d5aff, circle(-0.35, -0.06, 0.018)],
   ] },
 ];
 function sampleFigure(fig, n) {
@@ -1736,13 +1822,17 @@ function sampleFigure(fig, n) {
     if (len > 0) segs.push({ a: pts[i], b: pts[i + 1], len, color: new THREE.Color(color) });
   }
   const total = segs.reduce((s, x) => s + x.len, 0), out = [];
+  // a figure can use only part of the fleet (fig.share), so its dots stay distinct;
+  // the others stay dark on the ground behind the castle
+  const used = Math.round(n * (fig.share ?? 1));
   let acc = 0, k = 0;
-  for (let i = 0; i < n; i++) {
-    const d = (i + 0.5) / n * total;
+  for (let i = 0; i < used; i++) {
+    const d = (i + 0.5) / used * total;
     while (k < segs.length - 1 && acc + segs[k].len < d) acc += segs[k++].len;
     const f = (d - acc) / segs[k].len, s = segs[k];
     out.push({ x: s.a[0] + (s.b[0] - s.a[0]) * f, y: s.a[1] + (s.b[1] - s.a[1]) * f, c: s.color });
   }
+  for (let i = used; i < n; i++) out.push({ x: ((i % 40) / 39 - 0.5) * 4.4, y: -1.58, c: new THREE.Color(0, 0, 0) });
   return out;
 }
 const droneShapes = DRONE_FIGURES.map(f => sampleFigure(f, DRONES));
