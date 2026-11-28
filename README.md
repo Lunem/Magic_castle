@@ -2,6 +2,20 @@
 
 An interactive 3D castle (Three.js) with an **Explode** button that lifts the castle apart layer by layer, and several looks: **Normal** (the castle in daylight), **Closed** (the castle at night, with no show), **Stars** (the castle drawn as glowing stars, floating in the void), **Magic** (coloured floodlights, LED-studded roofs and fireworks), **Blueprint**, **Shine**, **Electro** and **Xmas**.
 
+Every mode also has a **☀️ Day / 🌙 Night** button with two versions of the mode:
+
+| Mode | Day | Night |
+|---|---|---|
+| Normal / Closed | daylight | night (Normal opens by day, Closed by night) |
+| Stars | normal castle with twinkling stars on its edges | castle of stars in the void |
+| Magic | golden hour, roof LEDs on | floodlights, LEDs and fireworks |
+| Blueprint | pencil on cream paper | cyanotype (white on Prussian blue) |
+| Shine | golden hour, beams switching on | blue beams |
+| Electro | daylight festival: pale neon, unlit drones | neon, lasers, fireworks and lit drones |
+| Xmas | sunny winter morning | violet night with the star on the keep |
+
+The pairs are listed in `TIMES` in `index.html`.
+
 - `index.html`: the whole page (Three.js is loaded from a CDN)
 - `models/castle.bin.gz`: all 629 castle parts, simplified and compressed (~7 MB)
 - `tools/build_model.py`: rebuilds that file from the STL kit in `Assets/` (not committed)

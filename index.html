@@ -41,6 +41,7 @@
     padding: 12px; border-radius: 8px; background: rgba(60, 0, 20, 0.85); color: #ffd6de; font: 12px/1.4 ui-monospace, monospace;
     white-space: pre-wrap; user-select: text; z-index: 10; }
   .actions { display: flex; gap: 10px; }
+  #time { white-space: nowrap; }
   .hint .touch { display: none; }
   @media (pointer: coarse) { .hint .mouse { display: none; } .hint .touch { display: inline; } }
   /* Phones and narrow windows: hint under the title, menu on two rows */
@@ -83,6 +84,9 @@
   #sheet .tick.left, #sheet .tick.right { height: 1px; width: 16px; } #sheet .tick.left { left: 0; } #sheet .tick.right { right: 0; }
   body.paper h1 { font-family: Georgia, "Times New Roman", serif; }
   body.paper .top { top: 38px; left: 44px; right: 44px; }
+  body.cyan #sheet { border-color: rgba(238, 244, 255, .5); color: rgba(238, 244, 255, .8); }
+  body.cyan #sheet::after { border-color: rgba(238, 244, 255, .7); }
+  body.cyan #sheet .tick { background: rgba(238, 244, 255, .55); }
   #fade { position: fixed; inset: 0; pointer-events: none; opacity: 0; transition: opacity .35s ease; }
   body.day { --ink: #1f2547; --dim: #4b557e; --glass: rgba(255, 255, 255, 0.55); --edge: rgba(40, 60, 130, 0.22); }
   body.day button { background: rgba(255, 255, 255, 0.35); }
@@ -119,6 +123,7 @@
     <button id="spin">Spin</button>
     <button id="enter" disabled title="Travel through the castle">Enter</button>
     <button id="labels" class="primary" title="Highlight parts and show their names on hover">Labels</button>
+    <button id="time" title="Switch between day and night">☀️ Day</button>
   </span>
   <span class="seg">
     <button data-mode="day">Normal</button>
@@ -179,6 +184,8 @@ const scene = new THREE.Scene();
 scene.fog = new THREE.FogExp2(0x0b0a22, 0.00045);
 const SKY_NIGHT = skyTexture(['#02020a', '#0a0a26', '#1b1446', '#2a1d55']);
 const SKY_DAY = skyTexture(['#3f74c4', '#6f9fdd', '#a9c9ee', '#e4edf6']);
+const SKY_WINTER = skyTexture(['#5d8fd0', '#94bbe8', '#cfe0f4', '#f2f6fb']);   // clear, pale winter morning
+const SKY_GOLDEN = skyTexture(['#34388a', '#e8785e', '#ffb070', '#ffd9a0']);   // end of the day: violet overhead, glowing horizon
 scene.background = SKY_NIGHT;
 
 const camera = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, 5, 20000);
@@ -213,6 +220,22 @@ const moonDisc = new THREE.Mesh(new THREE.CircleGeometry(120, 64),
 moonDisc.position.set(-3500, 2600, -5200);
 moonDisc.lookAt(0, 0, 0);
 scene.add(moonDisc);
+
+// ---------- Low sun (golden hour): a warm disc with a soft halo, near the horizon ----------
+const sunDisc = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const ctx = c.getContext('2d'), g = ctx.createRadialGradient(128, 128, 0, 128, 128, 128);
+  g.addColorStop(0, 'rgba(255,250,225,1)'); g.addColorStop(0.12, 'rgba(255,236,180,1)'); g.addColorStop(0.16, 'rgba(255,190,110,0.55)');
+  g.addColorStop(0.4, 'rgba(255,140,80,0.18)'); g.addColorStop(1, 'rgba(255,120,80,0)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, 256, 256);
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, fog: false, depthWrite: false, blending: THREE.AdditiveBlending }));
+  sp.position.set(6500, 280, -2000);   // left of the castle from the opening viewpoint
+  sp.scale.setScalar(2600);
+  sp.visible = false;
+  scene.add(sp);
+  return sp;
+})();
 
 // ---------- Starfield with twinkle ----------
 const stars = makeStars(7000);
@@ -340,9 +363,27 @@ const THEMES = {
     ground: 0x0a0820, bloom: [0.8, 0.55], stars: false, uplights: true, leds: true, fireworks: true,
     title: 'Magic Castle', fade: '#000005' },
 };
+// Magic by day: golden hour, the sky glowing red at the end of the day. The
+// castle keeps its daylight materials under a low warm sun, and the roof LEDs
+// are already twinkling.
+THEMES.magicDay = { sky: SKY_GOLDEN, fog: 0xd88a78, fogDensity: 0.00014, exposure: 1.0, mats: 'day',
+  hemi: [0xb8a8e0, 0x4a3a50, 1.0], key: [0xffa860, 3.2, 200, 420, -1250], rim: [0xff7a9a, 0.8],
+  ground: 0x6c7a48, bloom: [0.3, 0.88], stars: false, sun: true, leds: true,
+  title: 'Magic Castle', fade: '#f0a070' };
+// Shine by day: the same golden hour, the blue beams just switching on.
+THEMES.shineDay = { ...THEMES.magicDay, leds: false, beams: 'dusk', uplights: true, uplightScale: 0.25, title: 'Shining Castle' };
+// Electro by day: a festival in broad daylight. The castle looks normal, its neon
+// outlines only show where the walls are in shade, and the drones rehearse their
+// figures with their lights off. No lasers or fireworks.
+THEMES.talesDay = { ...THEMES.day, mats: 'day', tales: true, dayShow: true, title: 'Electro Castle' };
+// Stars by day: the normal daylight castle, with twinkling stars along its edges.
+THEMES.starsDay = { ...THEMES.day, mats: 'day', starsOver: true, bloom: [0.3, 0.97], title: 'Castle of Stars', fade: '#eef3fb' };
 THEMES.blueprint = { sky: paperTexture(), fog: 0xece5d1, fogDensity: 0, exposure: 1.0,
   hemi: [0xffffff, 0xffffff, 1], key: [0xffffff, 1, 900, 1500, 700], rim: [0xffffff, 0],
   ground: null, bloom: [0, 1], stars: false, paper: true, title: 'Castle Blueprint', fade: '#ece5d1' };
+// Blueprint by night: a cyanotype, white lines on Prussian blue (same drawing, colours swapped).
+THEMES.blueprintNight = { ...THEMES.blueprint, mats: 'blueprint', fog: 0x1f4f8f, cyan: true, fade: '#1f4f8f',
+  sky: paperTexture({ base: '#1f4f8f', dark: '10,35,80', light: '90,140,210', fibre: '150,190,240', edge: '8,25,60' }) };
 THEMES.shine = { sky: SKY_MAGIC, fog: 0x07051c, fogDensity: 0.00022, exposure: 1.0,
   hemi: [0x6a58e0, 0x140a30, 0.55], key: [0x9fa8ff, 0.3, -700, 1100, 500], rim: [0xd070ff, 0.8],
   ground: 0x0a0820, bloom: [0.5, 0.62], stars: true, uplights: true, uplightScale: 0.45, shine: true, beams: 'shine',
@@ -355,7 +396,30 @@ THEMES.xmas = { sky: SKY_MAGIC, fog: 0x1a1438, fogDensity: 0.0003, exposure: 1.0
   hemi: [0x8a78e8, 0x2a2050, 0.75], key: [0xc8d0ff, 0.6, -700, 1100, 500], rim: [0xb080ff, 0.6],   // soft pink-violet, like Magic
   ground: 0xd8daf2, bloom: [0.45, 0.6], stars: true, uplights: true, uplightScale: 0.5, snow: true, beams: 'xmas',
   title: 'Xmas Castle', fade: '#0a0820' };
+// Xmas by day: a sunny winter morning. Bright white snow glinting in a low sun,
+// a few flakes still falling, the star on the keep switched off.
+THEMES.xmasDay = { sky: SKY_WINTER, fog: 0xdfe8f4, fogDensity: 0.00016, exposure: 1.0, mats: 'xmasDay',
+  hemi: [0xdde8ff, 0x7c8aa6, 1.3], key: [0xfff1dc, 3.0, 1000, 800, 700], rim: [0xbcd4ff, 0.5],
+  ground: 0xeef2fa, bloom: [0.2, 0.9], stars: false, snow: true, snowDay: true, lightUi: true,
+  title: 'Xmas Castle', fade: '#eef3fb' };
 let mode = 'day';   // the page always opens in daylight
+
+// ---------- Day / night ----------
+// Each mode button can have a day and a night look (a theme from THEMES), and
+// opens on its `start` time. Modes not listed here have a single look for now:
+// the day/night button is greyed out for them.
+const TIMES = {
+  day:   { day: 'day', night: 'night', start: 'day' },     // Normal
+  night: { day: 'day', night: 'night', start: 'night' },   // Closed
+  stars: { day: 'starsDay', night: 'stars', start: 'night' },
+  magic: { day: 'magicDay', night: 'magic', start: 'night' },
+  shine: { day: 'shineDay', night: 'shine', start: 'night' },
+  xmas: { day: 'xmasDay', night: 'xmas', start: 'night' },
+  tales: { day: 'talesDay', night: 'tales', start: 'night' },
+  blueprint: { day: 'blueprint', night: 'blueprintNight', start: 'day' },
+};
+let uiMode = 'day', isNight = false;
+const themeFor = (ui, night) => TIMES[ui]?.[night ? 'night' : 'day'] ?? ui;
 
 // ---------- Ground ----------
 const ground = new THREE.Mesh(new THREE.CircleGeometry(4000, 96),
@@ -372,6 +436,7 @@ composer.addPass(bloom);
 composer.addPass(new OutputPass());
 
 // ---------- Mode switch ----------
+const matOf = (ud, m) => ud[THEMES[m].mats ?? m];   // a theme can reuse another's materials
 function applyTheme(m) {
   const T = THEMES[m];
   mode = m;
@@ -390,15 +455,30 @@ function applyTheme(m) {
   voidStars.visible = !!T.voidStars;
   controls.maxPolarAngle = T.floating ? Math.PI : Math.PI * 0.92;   // orbit below ground level for low-angle views
   moonDisc.visible = !!T.moon;
+  sunDisc.visible = !!T.sun;
   starUniforms.uDim.value = T.skyDim ?? 1;
   starUniforms.uSize.value = T.skySize ?? 1;
   setHover(null);
-  if (m === 'stars' && parts.length && !castleStarsBuilt) buildCastleStars();
-  if (m === 'blueprint' && parts.length && !blueprintBuilt) buildBlueprint();
+  if ((m === 'stars' || T.starsOver) && parts.length && !castleStarsBuilt) buildCastleStars();
+  castleStarUniforms.uDay.value = T.starsOver ? 1 : 0;
+  if (T.paper && parts.length && !blueprintBuilt) buildBlueprint();
+  if (T.paper) {   // cream paper and graphite, or cyanotype blue and white
+    blueprintUniforms.uPaper.value.set(T.cyan ? '#1f4f8f' : '#ece5d1');
+    blueprintUniforms.uInk.value.set(T.cyan ? '#eef4ff' : '#34333d');
+    blueprintUniforms.uBlue.value.set(T.cyan ? '#ffd36a' : '#3d5fa8');   // hover pencil
+    blueprintLineMat.color.set(T.cyan ? '#eef4ff' : '#34333d');
+    blueprintLineMat.opacity = T.cyan ? 0.85 : 0.75;
+  }
   if (m === 'shine' && parts.length && !shineBuilt) buildShine();
-  if (m === 'tales' && parts.length && !talesBuilt) buildTales();
-  if (m === 'xmas' && parts.length && !xmasBuilt) buildXmas();
-  if (m === 'xmas') snowMapDirty = true;
+  if (T.tales && parts.length && !talesBuilt) buildTales();
+  neonUniforms.uGain.value = T.dayShow ? 0.6 : 1;   // by day, washed out on the sunlit walls
+  lasers.visible = !T.dayShow;
+  drones.material = T.dayShow ? droneDayMat : droneMat;
+  if (T.snow && parts.length && !xmasBuilt) buildXmas();
+  if (T.snow) snowMapDirty = true;
+  xmasUniforms.uSnowGlow.value.setRGB(...(T.snowDay ? [0.07, 0.08, 0.1] : [0.22, 0.2, 0.3]));   // by day the sun does the work
+  xmasUniforms.uGlint.value = T.snowDay ? 1.6 : 1;
+  snowGeo.setDrawRange(0, T.snowDay ? FLAKES / 4 : FLAKES);   // only a few flakes left in the morning
   snowfall.visible = !!T.snow;
   if (T.tales && !talesGroup.visible) droneClock = 0;   // the drones take off again each time
   talesGroup.visible = !!T.tales;
@@ -409,30 +489,47 @@ function applyTheme(m) {
   fireworks.visible = !!T.fireworks;
   if (T.leds && parts.length && !roofLedsBuilt) buildRoofLeds();
   for (const p of parts) {
-    p.mesh.material = m === 'stars' ? DEPTH_ONLY : p.mesh.userData[m];
-    if (p.stars) p.stars.visible = m === 'stars';
+    p.mesh.material = m === 'stars' ? DEPTH_ONLY : matOf(p.mesh.userData, m);
+    if (p.stars) p.stars.visible = m === 'stars' || !!T.starsOver;
     if (p.leds) p.leds.visible = !!T.leds;
-    if (p.lines) p.lines.visible = m === 'blueprint';
-    if (p.neon) p.neon.visible = m === 'tales';
+    if (p.lines) p.lines.visible = !!T.paper;
+    if (p.neon) p.neon.visible = !!T.tales;
   }
   if (!T.floating) castle.position.y = castleBaseY;
-  document.body.classList.toggle('day', m === 'day' || !!T.paper);   // dark text on light backgrounds
+  document.body.classList.toggle('day', T.sky === SKY_DAY || !!T.lightUi || (T.paper && !T.cyan));   // dark text on light backgrounds
   document.body.classList.toggle('paper', !!T.paper);
+  document.body.classList.toggle('cyan', !!T.cyan);
   document.querySelector('h1').textContent = T.title;
   document.title = T.title;
-  document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('active', b.dataset.mode === m));
+  updateModeButtons();
 }
 
-document.querySelectorAll('[data-mode]').forEach(btn => btn.addEventListener('click', () => {
-  const next = btn.dataset.mode;
-  if (next === mode) return;
+const timeBtn = document.getElementById('time');
+function updateModeButtons() {
+  document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('active', b.dataset.mode === uiMode));
+  timeBtn.disabled = !TIMES[uiMode];
+  timeBtn.textContent = isNight ? '🌙 Night' : '☀️ Day';
+}
+
+// Fades out, switches to the look of mode button `ui` at that time, fades back in.
+function goTo(ui, night) {
+  const next = themeFor(ui, night);
+  uiMode = ui; isNight = night;
+  if (next === mode) { updateModeButtons(); return; }
   const fade = document.getElementById('fade');
   fade.style.background = THEMES[next].fade;
   fade.style.opacity = 1;
   setTimeout(() => {
     try { applyTheme(next); } catch (e) { showError(e); } finally { fade.style.opacity = 0; }
   }, 350);
+}
+
+document.querySelectorAll('[data-mode]').forEach(btn => btn.addEventListener('click', () => {
+  const next = btn.dataset.mode;
+  if (next === uiMode) return;
+  goTo(next, TIMES[next] ? TIMES[next].start === 'night' : next !== 'day' && next !== 'blueprint');
 }));
+timeBtn.addEventListener('click', () => { if (TIMES[uiMode]) goTo(uiMode, !isNight); });
 
 // ---------- Castle made of stars ----------
 // Points are scattered evenly over every part's surface (area-weighted) and added
@@ -460,12 +557,12 @@ const STAR_FOCUS = [
   { match: p => STAINED_GLASS.some(g => g.path === p.path && g.name === p.name), count: 30, glow: 1.3 },   // stained glass: small and flat, needs many stars to show its pattern and oval rim (not too bright, or the colours wash out to white)
 ];
 const castleStarUniforms = { uTime: { value: 0 }, uPR: { value: renderer.getPixelRatio() },
-  uScale: { value: 1300 }, uBright: { value: 1.95 } };   // uBright: overall star brightness
+  uScale: { value: 1300 }, uBright: { value: 1.95 }, uDay: { value: 0 } };   // uBright: overall star brightness
 const castleStarMat = new THREE.ShaderMaterial({
   uniforms: castleStarUniforms, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
   vertexShader: `
-    attribute float size; attribute float phase; attribute float spark; attribute float glow; attribute vec3 color;
-    uniform float uTime, uPR, uScale; varying float vA; varying vec3 vC;
+    attribute float size; attribute float phase; attribute float spark; attribute float glow; attribute float edge; attribute vec3 color;
+    uniform float uTime, uPR, uScale, uDay; varying float vA; varying vec3 vC;
     void main() {
       vec4 mv = modelViewMatrix * vec4(position, 1.0);
       // spark 0 = quiet star (dim, barely moves), 1 = restless star (fast, deep, sharp flashes)
@@ -483,15 +580,34 @@ const castleStarMat = new THREE.ShaderMaterial({
       float rim = 1.0 - abs(dot(normalize(normalMatrix * normal), normalize(-mv.xyz)));
       vA *= glow * mix(0.6, 1.5, rim * rim);
       vC = color;
-      gl_PointSize = clamp(size * uPR * uScale / -mv.z, 1.0, 6.0 * uPR);
+      if (uDay > 0.5) {
+        // By day the castle is drawn normally: keep a fifth of the edge stars and a few
+        // glints on the faces, warm white, flashing on and off, nudged towards the
+        // camera so the surface doesn't hide them.
+        float keep = edge > 0.5 ? step(fract(phase * 7.7), 0.22) : step(fract(phase * 13.1), 0.025);
+        float flash = pow(0.5 + 0.5 * sin(uTime * (1.2 + 2.0 * fract(phase * 3.1)) + phase), 3.0);
+        vA = keep * glow * (0.35 + 1.4 * flash) * (edge > 0.5 ? 0.6 : 0.9);
+        vC = mix(color, vec3(1.0, 0.93, 0.75), 0.75);
+        mv.xyz *= 0.996;
+      }
+      gl_PointSize = clamp(size * uPR * uScale / -mv.z * (1.0 + 1.2 * uDay), 1.0, (6.0 + 6.0 * uDay) * uPR);
       gl_Position = projectionMatrix * mv;
     }`,
   fragmentShader: `
-    uniform float uBright; varying float vA; varying vec3 vC;
+    uniform float uBright, uDay; varying float vA; varying vec3 vC;
     void main() {
-      float d = length(gl_PointCoord - 0.5);
+      vec2 q = gl_PointCoord - 0.5;
+      float d = length(q);
       float a = smoothstep(0.5, 0.0, d);
-      gl_FragColor = vec4(vC * uBright, a * a * vA);
+      a *= a;
+      if (uDay > 0.5) {
+        // a small four-pointed sparkle: bright core and two thin rays
+        float core = smoothstep(0.18, 0.0, d);
+        float rays = max(smoothstep(0.06, 0.0, abs(q.x)), smoothstep(0.06, 0.0, abs(q.y))) * smoothstep(0.5, 0.05, d);
+        a = max(core, rays * 0.8);
+      }
+      if (vA * a < 0.003) discard;
+      gl_FragColor = vec4(vC * uBright, a * vA);
     }`,
 });
 let castleStarsBuilt = false;
@@ -596,10 +712,11 @@ function buildCastleStars() {
     const ne = edges[k].length && !ornament ? Math.max(2, Math.round(CASTLE_STAR_COUNT * EDGE_SHARE * edges[k].length / totalEdge * focus.count)) : 0;
     const n = ns + ne;
     const pos = new Float32Array(n * 3), nrm = new Float32Array(n * 3), size = new Float32Array(n), phase = new Float32Array(n),
-      spark = new Float32Array(n), glow = new Float32Array(n), col = new Float32Array(n * 3);
+      spark = new Float32Array(n), glow = new Float32Array(n), edge = new Float32Array(n), col = new Float32Array(n * 3);
     tint.setHex(STAR_TINT[p.dayKey] ?? STAR_TINT.wall);
     for (let j = 0; j < n; j++) {
       const onEdge = j >= ns;
+      edge[j] = onEdge ? 1 : 0;
       if (onEdge) edges[k].sample(pos, j, nrm); else samplers[k].sample(pos, j, SURFACE_LIFT, nrm);
       if (Math.abs(nrm[j * 3]) + Math.abs(nrm[j * 3 + 1]) + Math.abs(nrm[j * 3 + 2]) < 0.5) nrm[j * 3 + 2] = 1;   // degenerate face
       spark[j] = Math.pow(Math.random(), onEdge ? 5 : 3);     // most stars quiet, a few restless; edges steadier
@@ -615,6 +732,7 @@ function buildCastleStars() {
     geo.setAttribute('phase', new THREE.BufferAttribute(phase, 1));
     geo.setAttribute('spark', new THREE.BufferAttribute(spark, 1));
     geo.setAttribute('glow', new THREE.BufferAttribute(glow, 1));
+    geo.setAttribute('edge', new THREE.BufferAttribute(edge, 1));
     geo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
     geo.boundingSphere = p.mesh.geometry.boundingSphere;
@@ -938,12 +1056,12 @@ async function applyStainedGlass() {
       if (hovered === part.mesh) setHover(null);
       const ud = part.mesh.userData;
       ud.day = day; ud.night = night; ud.magic = night;
-      if (mode !== 'stars') part.mesh.material = ud[mode];
+      if (mode !== 'stars') part.mesh.material = matOf(ud, mode);
       ud.glass = { pixels: ctx.getImageData(0, 0, GLASS_TEX_W, GLASS_TEX_H).data, uvOf };
-      if (blueprintBuilt) { ud.blueprint = blueprintGlassMat(tex); if (mode === 'blueprint') part.mesh.material = ud.blueprint; }
+      if (blueprintBuilt) { ud.blueprint = blueprintGlassMat(tex); if (THEMES[mode].paper) part.mesh.material = ud.blueprint; }
       if (shineBuilt) { ud.shine = shineMaterial(ud.magic); if (mode === 'shine') part.mesh.material = ud.shine; }
       if (talesBuilt) { ud.tales = talesMaterial(ud.magic, 'glass'); if (mode === 'tales') part.mesh.material = ud.tales; }
-      if (xmasBuilt) { ud.xmas = xmasMaterial(ud.magic); if (mode === 'xmas') part.mesh.material = ud.xmas; }
+      if (xmasBuilt) { ud.xmas = xmasMaterial(ud.magic); ud.xmasDay = xmasMaterial(ud.day); if (THEMES[mode].snow) part.mesh.material = matOf(ud, mode); }
       if (part.stars) colorStarsFromGlass(part);
     } catch (e) {
       showError(e);
@@ -1144,7 +1262,7 @@ function applyInterior() {
     if (!part) continue;
     const ud = part.mesh.userData;
     for (const m of ['day', 'night', 'magic']) ud[m] = interiorMaterial(ud[m], cfg, cfg.tint?.[m]);
-    if (mode !== 'stars') part.mesh.material = ud[mode];
+    if (mode !== 'stars') part.mesh.material = matOf(ud, mode);
   }
 }
 
@@ -1153,26 +1271,28 @@ function applyInterior() {
 // lines, with pencil hatching on the faces turned away from the light and
 // darker strokes where a surface turns away from the eye (the contours).
 const PAPER = new THREE.Color('#ece5d1'), INK = new THREE.Color('#34333d'), BLUE_PENCIL = new THREE.Color('#3d5fa8');
-function paperTexture() {
+// look: the sheet colour, then rgb triplets for dark mottles, light mottles, fibres and aged edges
+function paperTexture(look) {
+  look ??= { base: '#ece5d1', dark: '150,130,95', light: '255,252,240', fibre: '120,105,80', edge: '120,95,55' };   // cream drawing paper
   const W = 1024, H = 1024, c = document.createElement('canvas');
   c.width = W; c.height = H;
   const ctx = c.getContext('2d'), rnd = mulberry(1987);
-  ctx.fillStyle = '#ece5d1'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = look.base; ctx.fillRect(0, 0, W, H);
   for (let i = 0; i < 260; i++) {   // soft mottling
     const x = rnd() * W, y = rnd() * H, r = 30 + rnd() * 120;
     const g = ctx.createRadialGradient(x, y, 0, x, y, r);
     const a = 0.025 + rnd() * 0.03, dark = rnd() < 0.5;
-    g.addColorStop(0, dark ? `rgba(150,130,95,${a})` : `rgba(255,252,240,${a})`); g.addColorStop(1, 'rgba(0,0,0,0)');
+    g.addColorStop(0, dark ? `rgba(${look.dark},${a})` : `rgba(${look.light},${a})`); g.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = g; ctx.fillRect(x - r, y - r, r * 2, r * 2);
   }
   ctx.lineWidth = 0.6;
   for (let i = 0; i < 900; i++) {   // paper fibres
     const x = rnd() * W, y = rnd() * H, a = rnd() * Math.PI, l = 4 + rnd() * 14;
-    ctx.strokeStyle = `rgba(120,105,80,${0.05 + rnd() * 0.08})`;
+    ctx.strokeStyle = `rgba(${look.fibre},${0.05 + rnd() * 0.08})`;
     ctx.beginPath(); ctx.moveTo(x, y); ctx.quadraticCurveTo(x + Math.cos(a) * l * 0.5 + rnd() * 3, y + Math.sin(a) * l * 0.5 + rnd() * 3, x + Math.cos(a) * l, y + Math.sin(a) * l); ctx.stroke();
   }
   const v = ctx.createRadialGradient(W / 2, H / 2, W * 0.35, W / 2, H / 2, W * 0.75);   // aged edges
-  v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(120,95,55,0.18)');
+  v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, `rgba(${look.edge},0.18)`);
   ctx.fillStyle = v; ctx.fillRect(0, 0, W, H);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
@@ -1341,6 +1461,7 @@ const beamUniforms = { uOrigin: { value: new THREE.Vector3() }, uTime: { value: 
 // Beam looks per mode: Shine's laser blue, Xmas's softer gold
 const BEAM_LOOKS = {
   shine: { edge: [0.22, 0.38, 1.0], core: [0.62, 0.75, 1.0], gain: 1.1, flare: 0xffffff, light: 0xc8b8ff, lightI: 1.0 },
+  dusk:  { edge: [0.22, 0.38, 1.0], core: [0.62, 0.75, 1.0], gain: 0.7, flare: 0xfff2dc, light: 0xc8b8ff, lightI: 0.5 },   // Shine at golden hour: beams just coming on
   xmas:  { edge: [1.0, 0.62, 0.18], core: [1.0, 0.9, 0.62], gain: 0, flare: 0xffe2a8, light: 0xffd08a, lightI: 0.8, star: true },   // no beams: a star
 };
 const beamMat = new THREE.ShaderMaterial({
@@ -1559,14 +1680,14 @@ function talesMaterial(base, kind) {
 // gilding yellow, wood orange, ironwork violet. Light pulses run up the castle.
 const NEON = { wall: 0xff2fd0, base: 0x9a5cff, trim: 0x3dff6a, roof: 0x2fd0ff, gold: 0xffd23d, timber: 0xff8a2f,
   iron: 0xb070ff, glass: 0x3dff6a, brick: 0xff4f7a, lantern: 0xffe28a, tree: 0x3dff6a, hedge: 0x3dff6a, grass: 0x3dff6a };
-const neonUniforms = { uTime: talesUniforms.uTalesTime, uPR: { value: renderer.getPixelRatio() }, uScale: { value: 1300 } };
+const neonUniforms = { uTime: talesUniforms.uTalesTime, uPR: { value: renderer.getPixelRatio() }, uScale: { value: 1300 }, uGain: { value: 1 } };
 const neonLineMat = new THREE.ShaderMaterial({
   uniforms: neonUniforms, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
   vertexShader: `
-    attribute vec3 color; uniform float uTime; varying vec3 vC;
+    attribute vec3 color; uniform float uTime, uGain; varying vec3 vC;
     void main() {
       float pulse = 0.55 + 0.45 * smoothstep(0.6, 1.0, sin(position.z * 0.025 - uTime * 2.2));
-      vC = color * pulse * 0.7;
+      vC = color * pulse * 0.7 * uGain;
       gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
     }`,
   fragmentShader: `varying vec3 vC; void main() { gl_FragColor = vec4(vC, 1.0); }`,
@@ -1574,11 +1695,11 @@ const neonLineMat = new THREE.ShaderMaterial({
 const neonDotMat = new THREE.ShaderMaterial({
   uniforms: neonUniforms, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
   vertexShader: `
-    attribute vec3 color; uniform float uTime, uPR, uScale; varying vec3 vC;
+    attribute vec3 color; uniform float uTime, uPR, uScale, uGain; varying vec3 vC;
     void main() {
       vec4 mv = modelViewMatrix * vec4(position, 1.0);
       float pulse = 0.5 + 0.5 * smoothstep(0.5, 1.0, sin(position.z * 0.025 - uTime * 2.2));
-      vC = color * pulse;
+      vC = color * pulse * uGain;
       gl_PointSize = clamp(1.6 * uPR * uScale / -mv.z, 1.0, 5.0 * uPR);
       gl_Position = projectionMatrix * mv;
     }`,
@@ -1691,6 +1812,21 @@ const droneMat = new THREE.ShaderMaterial({
       float d = length(gl_PointCoord - 0.5);
       float a = smoothstep(0.5, 0.0, d);
       gl_FragColor = vec4(mix(vC, vec3(1.0), smoothstep(0.2, 0.0, d) * 0.6) * 1.4, a * vA);
+    }`,
+});
+// By day the drones fly the same show with their lights off: small dark silhouettes.
+const droneDayMat = new THREE.ShaderMaterial({
+  uniforms: droneUniforms, transparent: true, depthWrite: false,
+  vertexShader: `
+    uniform float uPR;
+    void main() {
+      gl_PointSize = 4.6 * uPR;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }`,
+  fragmentShader: `
+    void main() {
+      float a = smoothstep(0.5, 0.3, length(gl_PointCoord - 0.5));
+      gl_FragColor = vec4(0.13, 0.14, 0.2, a * 0.85);
     }`,
 });
 const droneGeo = new THREE.BufferGeometry();
@@ -1908,7 +2044,8 @@ snowMapRT.depthTexture = new THREE.DepthTexture(SNOW_MAP, SNOW_MAP);
 const snowCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 3000);
 snowCam.up.set(0, 0, -1);
 const xmasUniforms = { uXmasTime: { value: 0 }, uSnowMap: { value: snowMapRT.depthTexture }, uSnowReady: { value: 0 },
-  uSnowMin: { value: new THREE.Vector2() }, uSnowSize: { value: new THREE.Vector2(1, 1) }, uSnowCam: { value: new THREE.Vector3() } };
+  uSnowMin: { value: new THREE.Vector2() }, uSnowSize: { value: new THREE.Vector2(1, 1) }, uSnowCam: { value: new THREE.Vector3() },
+  uSnowGlow: { value: new THREE.Color(0.22, 0.2, 0.3) }, uGlint: { value: 1 } };
 let snowMapDirty = true;
 const snowMapMat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
 function renderSnowMap() {
@@ -1957,7 +2094,7 @@ function xmasMaterial(base, smooth = false, heavy = false, frost = false) {
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvXmas = position; vXmasN = objectNormal; vXmasW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>
-      varying vec3 vXmas, vXmasN, vXmasW; uniform float uXmasTime, uSnowReady;
+      varying vec3 vXmas, vXmasN, vXmasW; uniform float uXmasTime, uSnowReady, uGlint; uniform vec3 uSnowGlow;
       uniform sampler2D uSnowMap; uniform vec2 uSnowMin, uSnowSize; uniform vec3 uSnowCam;
       float xh(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
       float xnoise(vec3 p) {                      // smooth value noise
@@ -1995,11 +2132,11 @@ function xmasMaterial(base, smooth = false, heavy = false, frost = false) {
         diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.94, 0.96, 1.0), snow);
         roughnessFactor = mix(roughnessFactor, 0.97, snow);                          // powder is matte: no glossy highlights
         metalnessFactor = mix(metalnessFactor, 0.0, snow);
-        totalEmissiveRadiance += vec3(0.22, 0.2, 0.3) * snow;                       // snow glows softly (lavender): fairy-tale, no harsh facets
+        totalEmissiveRadiance += uSnowGlow * snow;                                   // snow glows softly (lavender at night): fairy-tale, no harsh facets
         float g = xh(floor(vXmas * 1.6));
         float glint = step(0.985, g);                                               // sparkles in gold, pink and ice blue
         vec3 gcol = g > 0.995 ? vec3(1.0, 0.85, 0.5) : (g > 0.99 ? vec3(1.0, 0.7, 0.95) : vec3(0.8, 0.9, 1.0));
-        totalEmissiveRadiance += gcol * snow * glint * (0.5 + 0.7 * max(0.0, sin(uXmasTime * 3.0 + drift * 40.0 + g * 90.0)));
+        totalEmissiveRadiance += gcol * snow * glint * uGlint * (0.5 + 0.7 * max(0.0, sin(uXmasTime * 3.0 + drift * 40.0 + g * 90.0)));
       }`);
   };
   m.customProgramCacheKey = () => 'xmas' + (smooth ? 's' : 'f') + (heavy ? 'h' : '') + (frost ? 'r' : '') + '|' + prevKey;
@@ -2014,6 +2151,7 @@ function buildXmas() {
     const heavy = ['grass', 'hedge', 'tree', 'rock'].includes(p.dayKey);
     const frost = ['hedge', 'tree'].includes(p.dayKey);
     p.mesh.userData.xmas = xmasMaterial(p.mesh.userData.magic, smooth, heavy, frost);
+    p.mesh.userData.xmasDay = xmasMaterial(p.mesh.userData.day, smooth, heavy, frost);
   }
 }
 
