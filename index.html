@@ -128,6 +128,7 @@
     <button data-mode="blueprint">Blueprint</button>
     <button data-mode="shine">Shine</button>
     <button data-mode="tales">Electro</button>
+    <button data-mode="xmas">Xmas</button>
   </span>
 </div>
 
@@ -344,12 +345,16 @@ THEMES.blueprint = { sky: paperTexture(), fog: 0xece5d1, fogDensity: 0, exposure
   ground: null, bloom: [0, 1], stars: false, paper: true, title: 'Castle Blueprint', fade: '#ece5d1' };
 THEMES.shine = { sky: SKY_MAGIC, fog: 0x07051c, fogDensity: 0.00022, exposure: 1.0,
   hemi: [0x6a58e0, 0x140a30, 0.55], key: [0x9fa8ff, 0.3, -700, 1100, 500], rim: [0xd070ff, 0.8],
-  ground: 0x0a0820, bloom: [0.5, 0.62], stars: true, uplights: true, uplightScale: 0.45, shine: true,
+  ground: 0x0a0820, bloom: [0.5, 0.62], stars: true, uplights: true, uplightScale: 0.45, shine: true, beams: 'shine',
   title: 'Shining Castle', fade: '#04031a' };
 THEMES.tales = { sky: SKY_MAGIC, fog: 0x07051c, fogDensity: 0.00022, exposure: 1.0,
   hemi: [0x3a2c90, 0x0a0618, 0.35], key: [0x8f9cff, 0.2, -700, 1100, 500], rim: [0xc070ff, 0.5],
   ground: 0x0a0820, bloom: [0.6, 0.5], stars: true, uplights: true, uplightScale: 0.35, fireworks: true, tales: true,
   title: 'Electro Castle', fade: '#04031a' };
+THEMES.xmas = { sky: SKY_MAGIC, fog: 0x1a1438, fogDensity: 0.0003, exposure: 1.05,
+  hemi: [0x8a78e8, 0x2a2050, 0.75], key: [0xc8d0ff, 0.6, -700, 1100, 500], rim: [0xb080ff, 0.6],   // soft pink-violet, like Magic
+  ground: 0xd8daf2, bloom: [0.45, 0.6], stars: true, uplights: true, uplightScale: 0.5, snow: true, beams: 'xmas',
+  title: 'Xmas Castle', fade: '#0a0820' };
 let mode = 'day';   // the page always opens in daylight
 
 // ---------- Ground ----------
@@ -392,10 +397,14 @@ function applyTheme(m) {
   if (m === 'blueprint' && parts.length && !blueprintBuilt) buildBlueprint();
   if (m === 'shine' && parts.length && !shineBuilt) buildShine();
   if (m === 'tales' && parts.length && !talesBuilt) buildTales();
+  if (m === 'xmas' && parts.length && !xmasBuilt) buildXmas();
+  if (m === 'xmas') snowMapDirty = true;
+  snowfall.visible = !!T.snow;
   if (T.tales && !talesGroup.visible) droneClock = 0;   // the drones take off again each time
   talesGroup.visible = !!T.tales;
-  shineGroup.visible = !!T.shine;
-  tipLight.intensity = T.shine ? 1.0 : 0;
+  shineGroup.visible = !!T.beams;
+  if (T.beams && parts.length && !tipMesh) findSpireTip();
+  tipLight.intensity = T.beams ? setBeamLook(T.beams).lightI : 0;
   for (const u of UPLIGHTS) u.light.intensity = T.uplights ? u.intensity * (T.uplightScale ?? 1) : 0;
   fireworks.visible = !!T.fireworks;
   if (T.leds && parts.length && !roofLedsBuilt) buildRoofLeds();
@@ -934,6 +943,7 @@ async function applyStainedGlass() {
       if (blueprintBuilt) { ud.blueprint = blueprintGlassMat(tex); if (mode === 'blueprint') part.mesh.material = ud.blueprint; }
       if (shineBuilt) { ud.shine = shineMaterial(ud.magic); if (mode === 'shine') part.mesh.material = ud.shine; }
       if (talesBuilt) { ud.tales = talesMaterial(ud.magic, 'glass'); if (mode === 'tales') part.mesh.material = ud.tales; }
+      if (xmasBuilt) { ud.xmas = xmasMaterial(ud.magic); if (mode === 'xmas') part.mesh.material = ud.xmas; }
       if (part.stars) colorStarsFromGlass(part);
     } catch (e) {
       showError(e);
@@ -1326,7 +1336,13 @@ function shineMaterial(base) {
 // the spire's tip and on into the sky. Each has 6 vertices: ground, tip, far end (x2 sides).
 const BEAMS_PER_FAN = 5;
 const beamUniforms = { uOrigin: { value: new THREE.Vector3() }, uTime: { value: 0 }, uLen: { value: 1000 },
-  uWidth: { value: 2.2 }, uSweep: { value: 30 } };
+  uWidth: { value: 2.2 }, uSweep: { value: 30 },
+  uEdge: { value: new THREE.Color(0.22, 0.38, 1.0) }, uCore: { value: new THREE.Color(0.62, 0.75, 1.0) }, uGain: { value: 1.1 } };
+// Beam looks per mode: Shine's laser blue, Xmas's softer gold
+const BEAM_LOOKS = {
+  shine: { edge: [0.22, 0.38, 1.0], core: [0.62, 0.75, 1.0], gain: 1.1, flare: 0xffffff, light: 0xc8b8ff, lightI: 1.0 },
+  xmas:  { edge: [1.0, 0.62, 0.18], core: [1.0, 0.9, 0.62], gain: 0, flare: 0xffe2a8, light: 0xffd08a, lightI: 0.8, star: true },   // no beams: a star
+};
 const beamMat = new THREE.ShaderMaterial({
   uniforms: beamUniforms, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
   vertexShader: `
@@ -1346,15 +1362,15 @@ const beamMat = new THREE.ShaderMaterial({
       gl_Position = projectionMatrix * viewMatrix * vec4(P, 1.0);
     }`,
   fragmentShader: `
-    uniform float uTime;
+    uniform float uTime, uGain; uniform vec3 uEdge, uCore;
     varying float vSide, vT, vI, vPhase;
     void main() {
       float core = 1.0 - abs(vSide);
       core = core * core;
       float along = vT < 0.5 ? mix(0.25, 1.0, vT * 2.0) : pow(1.0 - (vT - 0.5) * 2.0, 1.5);
       float flicker = 0.85 + 0.15 * sin(uTime * 6.0 + vPhase * 13.0);
-      vec3 col = mix(vec3(0.22, 0.38, 1.0), vec3(0.62, 0.75, 1.0), core * core);   // laser blue, paler at the core
-      gl_FragColor = vec4(col * core * along * vI * flicker * 1.1, 1.0);
+      vec3 col = mix(uEdge, uCore, core * core);   // paler at the core
+      gl_FragColor = vec4(col * core * along * vI * flicker * uGain, 1.0);
     }`,
 });
 const shineGroup = new THREE.Group();
@@ -1385,6 +1401,39 @@ const tipLight = new THREE.PointLight(0xc8b8ff, 0, 400, 0);   // lights the top 
 shineGroup.add(tipLight);
 let tipMesh = null, tipLocal = new THREE.Vector3(), shineHeight = 700;
 
+// Xmas: the keep's spire wears a twinkling star, like the top of a Christmas tree
+function starTexture() {
+  const S = 256, c = document.createElement('canvas');
+  c.width = c.height = S;
+  const ctx = c.getContext('2d'), m = S / 2;
+  const glow = ctx.createRadialGradient(m, m, 0, m, m, m);
+  glow.addColorStop(0, 'rgba(255,250,225,1)'); glow.addColorStop(0.12, 'rgba(255,225,150,0.85)');
+  glow.addColorStop(0.35, 'rgba(255,190,90,0.18)'); glow.addColorStop(1, 'rgba(255,170,60,0)');
+  ctx.fillStyle = glow; ctx.fillRect(0, 0, S, S);
+  const ray = (angle, len, width, alpha) => {   // a tapering ray of light
+    ctx.save(); ctx.translate(m, m); ctx.rotate(angle);
+    const g = ctx.createLinearGradient(0, 0, len, 0);
+    g.addColorStop(0, `rgba(255,245,210,${alpha})`); g.addColorStop(1, 'rgba(255,210,120,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.moveTo(0, -width); ctx.lineTo(len, 0); ctx.lineTo(0, width); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  };
+  for (let k = 0; k < 4; k++) ray(k * Math.PI / 2, m * 0.98, 7, 0.95);                 // four long rays
+  for (let k = 0; k < 4; k++) ray(Math.PI / 4 + k * Math.PI / 2, m * 0.55, 5, 0.7);    // four short ones
+  ctx.fillStyle = 'rgba(255,248,220,1)';                                               // a little five-point star at the heart
+  ctx.beginPath();
+  for (let i = 0; i < 10; i++) { const r = i % 2 ? 7 : 17, a = -Math.PI / 2 + i * Math.PI / 5; ctx.lineTo(m + Math.cos(a) * r, m + Math.sin(a) * r); }
+  ctx.closePath(); ctx.fill();
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+const treeStar = new THREE.Sprite(new THREE.SpriteMaterial({ map: starTexture(), blending: THREE.AdditiveBlending,
+  depthWrite: false, transparent: true }));
+treeStar.raycast = () => {};
+treeStar.visible = false;
+shineGroup.add(treeStar);
+
 // Projectors: four fans (front-left, front-right, back-left, back-right) spread on the ground.
 function placeShineBeams(front, h) {
   shineHeight = h;
@@ -1412,15 +1461,27 @@ function placeShineBeams(front, h) {
   tipFlare.scale.setScalar(h * 0.06);
 }
 
-function buildShine() {
-  shineBuilt = true;
-  for (const p of parts) p.mesh.userData.shine = shineMaterial(p.mesh.userData.magic);
+function findSpireTip() {
   const tip = parts.find(p => p.mesh.userData.path === 'DONJON/Toiture' && p.mesh.userData.name === 'Pointe');
   if (tip) {
     tipMesh = tip.mesh;
     const b = tip.mesh.geometry.boundingBox;
     tipLocal.set((b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, b.max.z);   // model z is up
   }
+}
+function buildShine() {
+  shineBuilt = true;
+  for (const p of parts) p.mesh.userData.shine = shineMaterial(p.mesh.userData.magic);
+}
+function setBeamLook(name) {
+  const L = BEAM_LOOKS[name];
+  beamUniforms.uEdge.value.setRGB(...L.edge); beamUniforms.uCore.value.setRGB(...L.core); beamUniforms.uGain.value = L.gain;
+  tipFlare.material.color.setHex(L.flare);
+  tipLight.color.setHex(L.light);
+  beams.visible = L.gain > 0;
+  tipFlare.visible = !L.star;
+  treeStar.visible = !!L.star;
+  return L;
 }
 
 function updateShine(t) {
@@ -1434,6 +1495,15 @@ function updateShine(t) {
   }
   const pulse = 0.85 + 0.15 * Math.sin(t * 2.2) + 0.08 * Math.sin(t * 7.3);
   tipFlare.scale.setScalar(shineHeight * 0.06 * pulse);
+  if (treeStar.visible) {
+    // twinkle: a slow breath, quick sparkles, and the rays turning gently
+    const tw = 0.8 + 0.12 * Math.sin(t * 1.6) + 0.1 * Math.max(0, Math.sin(t * 9.1)) * Math.max(0, Math.sin(t * 3.7));
+    treeStar.position.copy(beamUniforms.uOrigin.value).y += shineHeight * 0.012;
+    treeStar.scale.setScalar(shineHeight * 0.09 * tw);
+    treeStar.material.rotation = Math.sin(t * 0.4) * 0.25;
+    treeStar.material.opacity = 0.75 + 0.25 * tw;
+    tipLight.intensity = 0.6 + 0.4 * tw;
+  }
 }
 
 // ---------- Tales: night show with projection mapping, lasers, fireworks and a drone show ----------
@@ -1735,6 +1805,176 @@ function updateTales(t, dt) {
   droneGeo.attributes.position.needsUpdate = droneGeo.attributes.color.needsUpdate = true;
 }
 
+// ---------- Xmas: snow on the roofs, falling flakes, soft violet light ----------
+// Every surface that faces up enough (roofs, ledges, battlements, rocks, grass) gets a
+// patchy coat of snow with a few glints; the steep sides stay bare. Flakes drift down
+// all around the castle. Lighting: Magic's violet, softer, with warm windows.
+// Snow only falls where the sky is open: a height map of the castle seen from above
+// (rendered when the mode starts, and again after an explode) tells each surface whether
+// something stands over it: the passage, the cave, under the bridge and eaves stay dry.
+const SNOW_MAP = 1024;
+const snowMapRT = new THREE.WebGLRenderTarget(SNOW_MAP, SNOW_MAP);
+snowMapRT.depthTexture = new THREE.DepthTexture(SNOW_MAP, SNOW_MAP);
+const snowCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 3000);
+snowCam.up.set(0, 0, -1);
+const xmasUniforms = { uXmasTime: { value: 0 }, uSnowMap: { value: snowMapRT.depthTexture }, uSnowReady: { value: 0 },
+  uSnowMin: { value: new THREE.Vector2() }, uSnowSize: { value: new THREE.Vector2(1, 1) }, uSnowCam: { value: new THREE.Vector3() } };
+let snowMapDirty = true;
+const snowMapMat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
+function renderSnowMap() {
+  snowMapDirty = false;
+  const box = new THREE.Box3();
+  for (const p of parts) box.expandByObject(p.mesh);
+  const size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
+  const half = Math.max(size.x, size.z) / 2 + 10;
+  Object.assign(snowCam, { left: -half, right: half, top: half, bottom: -half, near: 1, far: size.y + 200 });
+  snowCam.position.set(c.x, box.max.y + 100, c.z);
+  snowCam.lookAt(c.x, box.min.y, c.z);
+  snowCam.updateProjectionMatrix(); snowCam.updateMatrixWorld();
+  // only the castle's solid surfaces: hide everything else for this one render
+  const hidden = [];
+  for (const o of scene.children) if (o !== castle && o.visible) { o.visible = false; hidden.push(o); }
+  castle.traverse(o => { if ((o.isPoints || o.isLine || o.isSprite) && o.visible) { o.visible = false; hidden.push(o); } });
+  const bg = scene.background;
+  scene.background = null; scene.overrideMaterial = snowMapMat;
+  renderer.setRenderTarget(snowMapRT);
+  renderer.clear();
+  renderer.render(scene, snowCam);
+  renderer.setRenderTarget(null);
+  scene.overrideMaterial = null; scene.background = bg;
+  for (const o of hidden) o.visible = true;
+  const U = xmasUniforms;
+  U.uSnowMin.value.set(c.x - half, c.z - half); U.uSnowSize.value.set(half * 2, half * 2);
+  U.uSnowCam.value.set(snowCam.position.y, snowCam.near, snowCam.far);
+  U.uSnowReady.value = 1;
+}
+let xmasBuilt = false;
+const xmasMatCache = new Map();
+// smooth = shaded with smoothed normals (the roofs), so their facets don't show under the snow;
+// heavy = grass, trees, rocks: snow piles up thick; frost = trees: their sides are frosted too,
+// even under their own foliage
+function xmasMaterial(base, smooth = false, heavy = false, frost = false) {
+  const key = (smooth ? 's' : 'f') + (heavy ? 'h' : '') + (frost ? 'r|' : '|') + base.uuid;
+  if (xmasMatCache.has(key)) return xmasMatCache.get(key);
+  const m = base.clone();
+  if (smooth) m.flatShading = false;
+  const prev = base.onBeforeCompile, prevKey = base.customProgramCacheKey.call(base);
+  m.onBeforeCompile = (sh, r) => {
+    prev.call(m, sh, r);   // keeps the textured interiors and the water ripples
+    Object.assign(sh.uniforms, xmasUniforms);
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vXmas, vXmasN, vXmasW;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvXmas = position; vXmasN = objectNormal; vXmasW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>
+      varying vec3 vXmas, vXmasN, vXmasW; uniform float uXmasTime, uSnowReady;
+      uniform sampler2D uSnowMap; uniform vec2 uSnowMin, uSnowSize; uniform vec3 uSnowCam;
+      float xh(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
+      float xnoise(vec3 p) {                      // smooth value noise
+        vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+        return mix(mix(mix(xh(i), xh(i + vec3(1, 0, 0)), f.x), mix(xh(i + vec3(0, 1, 0)), xh(i + vec3(1, 1, 0)), f.x), f.y),
+                   mix(mix(xh(i + vec3(0, 0, 1)), xh(i + vec3(1, 0, 1)), f.x), mix(xh(i + vec3(0, 1, 1)), xh(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+      }`)
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+      {
+        // model-space normal (z up): smooth where the part has normals (roofs), else the face's own
+        vec3 nM = length(vXmasN) > 0.5 ? normalize(vXmasN) : normalize(cross(dFdx(vXmas), dFdy(vXmas)));
+        float drift = xnoise(vXmas * 0.12) * 0.65 + xnoise(vXmas * 0.45) * 0.35;   // soft, uneven drifts
+        float snow = ${heavy
+          ? 'smoothstep(-0.2, 0.15, nM.z + (drift - 0.5) * 0.4)'      // thick
+          : 'smoothstep(-0.02, 0.28, nM.z + (drift - 0.5) * 0.3)'};   // flat and gentle surfaces fully white, holds on steep roofs
+        float frost = ${frost ? '0.55 * smoothstep(0.45, 0.75, drift)' : '0.0'};
+        // sheltered? compare this point's height with the highest surface above it, seen from the sky
+        if (uSnowReady > 0.5) {
+          // soft edges: average the test over a small 4x4 neighbourhood of the height map
+          vec2 uv = (vXmasW.xz - uSnowMin) / uSnowSize;
+          uv.y = 1.0 - uv.y;
+          float texel = uSnowSize.x / ${SNOW_MAP}.0;
+          float slope = min(sqrt(max(1.0 - nM.z * nM.z, 0.0)) / max(abs(nM.z), 0.05), 8.0);
+          float bias = 0.8 + 2.5 * texel * slope;
+          float open = 0.0;
+          for (int i = 0; i < 4; i++) for (int j = 0; j < 4; j++) {
+            vec2 o = (vec2(float(i), float(j)) - 1.5) * 1.2 / ${SNOW_MAP}.0;
+            float d = texture2D(uSnowMap, uv + o).r;
+            float top = uSnowCam.x - (uSnowCam.y + d * (uSnowCam.z - uSnowCam.y));
+            open += 1.0 - smoothstep(bias, bias * 2.5 + 1.5, top - vXmasW.y);
+          }
+          snow *= smoothstep(0.1, 0.9, open / 16.0);
+        }
+        snow = max(snow, frost);
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.94, 0.96, 1.0), snow);
+        roughnessFactor = mix(roughnessFactor, 0.97, snow);                          // powder is matte: no glossy highlights
+        metalnessFactor = mix(metalnessFactor, 0.0, snow);
+        totalEmissiveRadiance += vec3(0.22, 0.2, 0.3) * snow;                       // snow glows softly (lavender): fairy-tale, no harsh facets
+        float g = xh(floor(vXmas * 1.6));
+        float glint = step(0.985, g);                                               // sparkles in gold, pink and ice blue
+        vec3 gcol = g > 0.995 ? vec3(1.0, 0.85, 0.5) : (g > 0.99 ? vec3(1.0, 0.7, 0.95) : vec3(0.8, 0.9, 1.0));
+        totalEmissiveRadiance += gcol * snow * glint * (0.5 + 0.7 * max(0.0, sin(uXmasTime * 3.0 + drift * 40.0 + g * 90.0)));
+      }`);
+  };
+  m.customProgramCacheKey = () => 'xmas' + (smooth ? 's' : 'f') + (heavy ? 'h' : '') + (frost ? 'r' : '') + '|' + prevKey;
+  xmasMatCache.set(key, m);
+  return m;
+}
+function buildXmas() {
+  xmasBuilt = true;
+  for (const p of parts) {
+    const smooth = p.dayKey === 'roof';
+    if (smooth && !p.mesh.geometry.attributes.normal) p.mesh.geometry.computeVertexNormals();   // only flat-shaded elsewhere
+    const heavy = ['grass', 'hedge', 'tree', 'rock'].includes(p.dayKey);
+    const frost = ['hedge', 'tree'].includes(p.dayKey);
+    p.mesh.userData.xmas = xmasMaterial(p.mesh.userData.magic, smooth, heavy, frost);
+  }
+}
+
+// Falling snow: flakes animated on the GPU, wrapping round a tall cylinder around the castle
+const FLAKES = innerWidth < 800 ? 7000 : 14000;
+const snowUniforms = { uTime: { value: 0 }, uPR: { value: renderer.getPixelRatio() }, uH: { value: 1200 }, uScale: { value: 1300 } };
+const snowGeo = new THREE.BufferGeometry();
+{
+  const pos = new Float32Array(FLAKES * 3), seed = new Float32Array(FLAKES);
+  for (let i = 0; i < FLAKES; i++) {
+    const r = Math.sqrt(Math.random()) * 1, a = Math.random() * Math.PI * 2;
+    pos.set([Math.cos(a) * r, Math.random(), Math.sin(a) * r], i * 3);   // unit cylinder, scaled in the shader
+    seed[i] = Math.random();
+  }
+  snowGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  snowGeo.setAttribute('seed', new THREE.BufferAttribute(seed, 1));
+}
+const snowMat = new THREE.ShaderMaterial({
+  uniforms: snowUniforms, transparent: true, depthWrite: false,
+  vertexShader: `
+    attribute float seed; uniform float uTime, uPR, uH, uScale; varying float vA;
+    void main() {
+      float fall = 0.035 + 0.03 * seed;                         // share of the height per second
+      float y = fract(position.y - uTime * fall) * uH * 1.5 - uH * 0.05;
+      vec3 p = vec3(position.x * uH * 2.0, y, position.z * uH * 2.0);   // a wide circle around the castle
+      p.x += sin(uTime * (0.4 + seed) + seed * 40.0) * uH * 0.02;   // drifting
+      p.z += cos(uTime * (0.3 + seed * 0.7) + seed * 17.0) * uH * 0.02;
+      vec4 mv = modelViewMatrix * vec4(p, 1.0);
+      vA = 0.55 + 0.45 * seed;
+      gl_PointSize = clamp((1.6 + seed * 2.2) * uPR * uScale / -mv.z, 1.0, 7.0 * uPR);
+      gl_Position = projectionMatrix * mv;
+    }`,
+  fragmentShader: `
+    varying float vA;
+    void main() {
+      float a = smoothstep(0.5, 0.15, length(gl_PointCoord - 0.5));
+      gl_FragColor = vec4(vec3(0.95, 0.96, 1.0), a * vA);
+    }`,
+});
+const snowfall = new THREE.Points(snowGeo, snowMat);
+snowfall.frustumCulled = false;
+snowfall.visible = false;
+scene.add(snowfall);
+
+function updateXmas(t) {
+  if (!snowfall.visible) return;
+  if (snowMapDirty && !animating) renderSnowMap();
+  xmasUniforms.uXmasTime.value = snowUniforms.uTime.value = t;
+  snowUniforms.uH.value = castleHeight;
+}
+
 function subKey(path) { return path.split('/').slice(0, 2).join('/'); }
 
 async function fetchWithProgress(url) {
@@ -1780,7 +2020,7 @@ function updateExplode(dt) {
     const k = ease(THREE.MathUtils.clamp((animT - delay) / EXPLODE_TIME, 0, 1));
     p.mesh.position.copy(p.offset).multiplyScalar(k);
   }
-  if (animT === 0 || animT === totalTime) animating = false;
+  if (animT === 0 || animT === totalTime) { animating = false; snowMapDirty = true; }   // parts moved: redo the snow cover
 }
 
 // ---------- Phone menu: the controls fold into a burger button ----------
@@ -1951,6 +2191,7 @@ renderer.setAnimationLoop(() => {
   updateFireworks(now / 1000);
   updateShine(now / 1000);
   updateTales(now / 1000, dt);
+  updateXmas(now / 1000);
   if (THEMES[mode].floating) castle.position.y = castleBaseY + 40 + Math.sin(now / 2600) * 14;   // drifting in the void
   if (travel) updateTravel(dt); else controls.update();
   composer.render();
